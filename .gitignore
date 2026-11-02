@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Gibson local state (regenerated with gate-baseline.sh)
+.gibson-baseline.json
+
+# Local SQLite databases (app data and test data)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Environment and secrets
+.env
+.env.*
+
+# Logs and coverage
+*.log
+npm-debug.log*
+coverage/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+
+dist/
