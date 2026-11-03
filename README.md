@@ -35,18 +35,32 @@ token for the agents they run (rules in `AGENTS.md` → "Agent credentials").
 
        security add-generic-password -a "$USER" -s gibson-agent-token -w
 
-3. Give the agent its own worktree with an HTTPS remote, so `git push` uses the
-   restricted token too (via `gh`), not your SSH key:
+3. Give the agent its own worktree and make **that worktree only** push over HTTPS
+   through `gh`, so `git push` authenticates with `GH_TOKEN` (the restricted token)
+   instead of your SSH key. These settings live in the worktree's own config; your
+   main checkout and other repositories are unchanged:
 
-       git worktree add ../wt-<issue>-<slug> -b feat/<issue>-<slug> origin/main
-       git -C ../wt-<issue>-<slug> remote set-url origin https://github.com/RuzniSadiq/task-management.git
-       gh auth setup-git
+       WT=../wt-<issue>-<slug>
+       git worktree add "$WT" -b feat/<issue>-<slug> origin/main
+       git config extensions.worktreeConfig true
+       git -C "$WT" config --worktree url."https://github.com/".insteadOf "git@github.com:"
+       git -C "$WT" config --worktree credential.https://github.com.helper ''
+       git -C "$WT" config --worktree --add credential.https://github.com.helper '!gh auth git-credential'
 
-4. Launch The Gibson loop with the restricted token:
+   `gh` uses `GH_TOKEN` in preference to your stored login whenever it is set
+   (`gh help environment`), so only run git in this worktree with `GH_TOKEN` set.
 
-       GH_TOKEN="$(security find-generic-password -s gibson-agent-token -w)" \
-         ~/Code/the-gibson/scripts/loop.sh --runner claude \
-         --repo ../wt-<issue>-<slug> --repo-slug RuzniSadiq/task-management
+4. Check which credential is active, then launch The Gibson loop with it:
+
+       export GH_TOKEN="$(security find-generic-password -s gibson-agent-token -w)"
+       gh auth status          # must show "… (GH_TOKEN)" as the active account source
+       ~/Code/the-gibson/scripts/loop.sh --runner claude \
+         --repo "$WT" --repo-slug RuzniSadiq/task-management
+
+   This shell holds **only** the restricted agent token, which the builder is meant to
+   use. The reviewer token (`gibson-reviewer-token`) is never set here: the review
+   step runs separately in its own shell (`second-opinion.sh` with
+   `GIBSON_FORMAL_REVIEW=1` and `GH_REVIEWER_TOKEN`), so a builder never holds it.
 
 ## Known limitations
 
