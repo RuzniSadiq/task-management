@@ -50,6 +50,23 @@ Pure memory-only commits are exempt (see Shared agent memory above).
 5. **Report failures verbatim.** Never mark done what you did not verify.
 6. **Clean up:** remove the worktree, delete the branch, release the claim.
 
+### Agent credentials (least privilege)
+Applies to every agent runtime (Claude Code, Codex, Grok, …) and every developer.
+- Agents run with `GH_TOKEN` set to a **fine-grained token scoped to
+  `RuzniSadiq/task-management` only**, never the owner's own login. Repository
+  permissions: Contents read/write, Pull requests read/write, Issues read/write,
+  Metadata read, Checks read, Commit statuses read, Actions read. **Not granted:**
+  Administration, Environments, Deployments, Secrets, Workflows. GitHub refuses
+  anything outside these (e.g. changing branch protection, approving a release,
+  editing workflow files over HTTPS).
+- The reviewer identity's token (`ruzni-reviewer`) is used only by the review step
+  (`second-opinion.sh` → `formal-review.sh`), never exported to a builder.
+- Run agents through The Gibson's `scripts/loop.sh`; it installs
+  `scripts/repo-boundary-guard.sh` in front of `git` for every runner, which refuses
+  commits/pushes that leave this repository or modify gate configuration.
+- Known limit: agents run as the same OS user as the owner (see README). These
+  rules are enforced by GitHub and the Gibson driver, not by the agent.
+
 ### Hot files (single claimant, own PR)
 | File | Rule |
 |---|---|
