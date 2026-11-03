@@ -90,4 +90,4 @@ Pure memory-only commits are exempt (see Shared agent memory above).
 - Branch `feat/<issue>-<slug>`; PR body contains `Closes #N` and the active-work claim line.
 - Labels: `gibson`, `tier-a|b|c`, `P0|P1|P2`.
 - Every commit is signed off: `git commit -s` (DCO `Signed-off-by` trailer on every PR commit).
-- `main` is protected: required checks `gate`, `security-fast`, `test-integrity`, `DCO` (strict — branch must be up to date); 1 approving review from an independent identity (`ruzni-reviewer`) after the last push; stale approvals dismissed; admins included; no force-push or deletion.
+- `main` protection policy — configured in `.gibson-delivery.json`, applied with The Gibson's `scripts/delivery-control/apply-branch-protection.sh`; this file is not proof it is live, so check the live state with `scripts/delivery-control/audit.sh --repo RuzniSadiq/task-management`: required checks `gate`, `security-fast`, `test-integrity`, `DCO` (strict — branch must be up to date); 1 approving review from an independent identity (`ruzni-reviewer`) after the last push; stale approvals dismissed; admins included; no force-push or deletion.
