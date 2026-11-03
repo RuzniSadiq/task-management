@@ -29,3 +29,5 @@ Thumbs.db
 
 
 dist/
+gibson/
+.gibson-receipts/
