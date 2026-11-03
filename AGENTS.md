@@ -74,7 +74,7 @@ Pure memory-only commits are exempt (see Shared agent memory above).
 
 ### Deployment truth (verified 2026-11-03)
 - Host/project: none (not deployed)
-- Production branch (VERIFIED in the host's settings, not in docs): none
+- Production branch: `main` (no hosting provider; releases are tags cut from `main`, approved via the `release` environment — planned). Delivery model `tag-pin` in `.gibson-delivery.json`.
 - Merge to main ⇒ nothing is deployed
 - Preview deployments: off
 
@@ -82,7 +82,7 @@ Pure memory-only commits are exempt (see Shared agent memory above).
 - Money: none
 - Auth and authorization boundaries: none
 - PII / consent: none
-- Security boundaries: `.githooks/*`, `.github/workflows/*`, `.agents/gate.json`, `scripts/*` (gate scripts)
+- Security boundaries: `.githooks/*`, `.github/workflows/*`, `.agents/gate.json`, `.gibson-delivery.json`, `scripts/*` (gate scripts)
 - Destructive or irreversible data and schema operations: none
 - Secret values, public launches, legal commitments
 
@@ -90,3 +90,4 @@ Pure memory-only commits are exempt (see Shared agent memory above).
 - Branch `feat/<issue>-<slug>`; PR body contains `Closes #N` and the active-work claim line.
 - Labels: `gibson`, `tier-a|b|c`, `P0|P1|P2`.
 - Every commit is signed off: `git commit -s` (DCO `Signed-off-by` trailer on every PR commit).
+- `main` is protected: required checks `gate`, `security-fast`, `test-integrity`, `DCO` (strict — branch must be up to date); 1 approving review from an independent identity (`ruzni-reviewer`) after the last push; stale approvals dismissed; admins included; no force-push or deletion.
