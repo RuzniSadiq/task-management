@@ -4,6 +4,10 @@ A small Task Management API, built by AI agents through
 [The Gibson](https://github.com/The-AIE/the-gibson).
 [FINOS](https://www.finos.org/) controls are planned (not yet in place).
 
+## Project status
+
+The Task Management API is under construction: its endpoints are not implemented yet. Progress is tracked in this repository's issues.
+
 ## Requirements
 
 - Node.js 22.18 or later
