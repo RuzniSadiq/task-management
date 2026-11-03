@@ -57,8 +57,9 @@ Applies to every agent runtime (Claude Code, Codex, Grok, …) and every develop
   permissions: Contents read/write, Pull requests read/write, Issues read/write,
   Metadata read, Checks read, Commit statuses read, Actions read. **Not granted:**
   Administration, Environments, Deployments, Secrets, Workflows. GitHub refuses
-  anything outside these (e.g. changing branch protection, approving a release,
-  editing workflow files over HTTPS).
+  anything outside these through `gh`/the API (e.g. changing branch protection,
+  approving a release, reading secrets). `git push` is not covered by this token;
+  pushes are governed by branch protection on `main`, which applies to every credential.
 - The reviewer identity's token (`ruzni-reviewer`) is used only by the review step
   (`second-opinion.sh` → `formal-review.sh`), never exported to a builder.
 - Run agents through The Gibson's `scripts/loop.sh`; it installs
