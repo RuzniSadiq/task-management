@@ -28,8 +28,9 @@ token for the agents they run (rules in `AGENTS.md` → "Agent credentials").
 1. GitHub → Settings → Developer settings → **Fine-grained tokens** → Generate:
    - Resource owner: `RuzniSadiq`; Repository access: **Only select repositories** → `task-management`
    - Repository permissions: Contents **Read and write**, Pull requests **Read and write**,
-     Issues **Read and write**, Checks **Read**, Commit statuses **Read**, Actions **Read**
-     (Metadata **Read** is automatic). Leave everything else — including Administration,
+     Issues **Read and write**, Commit statuses **Read**, Actions **Read** (Metadata
+     **Read** is automatic; there is no Checks permission for fine-grained tokens, and
+     check results are readable on this public repo). Leave everything else — including Administration,
      Environments, Deployments, Secrets and Workflows — at **No access**.
 2. Store it in the macOS Keychain (never in the repo or a `.env` file):
 

@@ -55,7 +55,8 @@ Applies to every agent runtime (Claude Code, Codex, Grok, …) and every develop
 - Agents run with `GH_TOKEN` set to a **fine-grained token scoped to
   `RuzniSadiq/task-management` only**, never the owner's own login. Repository
   permissions: Contents read/write, Pull requests read/write, Issues read/write,
-  Metadata read, Checks read, Commit statuses read, Actions read. **Not granted:**
+  Metadata read, Commit statuses read, Actions read (fine-grained tokens have no
+  Checks permission; check results are readable on this public repo). **Not granted:**
   Administration, Environments, Deployments, Secrets, Workflows. GitHub refuses
   anything outside these through `gh`/the API (e.g. changing branch protection,
   approving a release, reading secrets). `git push` is not covered by this token;

@@ -1,0 +1,273 @@
+{
+  "schema": "task-management.control-evidence/v1",
+  "control": {
+    "id": "P2",
+    "name": "Agent least privilege",
+    "type": "preventative",
+    "finos": [
+      {
+        "framework": "FINOS AI Governance Framework",
+        "version": "v3 (2026-10-26)",
+        "id": "MI-18",
+        "title": "Agent Authority Least Privilege Framework",
+        "status": "Approved-Specification"
+      },
+      {
+        "framework": "FINOS AI Governance Framework",
+        "version": "v3 (2026-10-26)",
+        "id": "RI-24",
+        "title": "Agent Action Authorization Bypass",
+        "kind": "risk"
+      },
+      {
+        "framework": "FINOS SDLC Common Controls Catalog",
+        "id": "SDLC-SEC-013",
+        "version": "0.1",
+        "title": "Non-Approved Agentic Processes",
+        "kind": "risk"
+      },
+      {
+        "framework": "FINOS SDLC Common Controls Catalog",
+        "id": "SDLC-PREV-012",
+        "version": "0.2",
+        "title": "Deployment Gating",
+        "kind": "related (branch protection, AC3c)"
+      }
+    ],
+    "gibson": [
+      "docs/26-owasp-agentic-mapping.md ASI02: least-privilege tokens; repo-boundary guard",
+      "scripts/repo-boundary-guard.sh"
+    ],
+    "policy": "AGENTS.md \u2192 Agent credentials (least privilege)"
+  },
+  "run": {
+    "repo": "RuzniSadiq/task-management",
+    "main_sha": "86335331bbe58c8561aebed611872136aac01a4f",
+    "gibson_sha": "722780b89a1ef8e8bf15b65ec07ec0f7149d0369",
+    "executed_by": "repository owner (interactive session); controls are enforced by GitHub and the Gibson driver, not by the agent",
+    "issue": "https://github.com/RuzniSadiq/task-management/issues/11",
+    "agent_token": {
+      "type": "fine-grained personal access token",
+      "scope": "RuzniSadiq/task-management only",
+      "granted": [
+        "Contents: read/write",
+        "Pull requests: read/write",
+        "Issues: read/write",
+        "Commit statuses: read",
+        "Actions: read",
+        "Metadata: read"
+      ],
+      "not_granted": [
+        "Administration",
+        "Environments",
+        "Deployments",
+        "Secrets",
+        "Workflows"
+      ]
+    },
+    "redactions": [
+      "local home directory shortened to ~ in guard messages"
+    ]
+  },
+  "proofs": [
+    {
+      "id": "AC3a-read-protection",
+      "acceptance_criterion": "AC3",
+      "attempt": "read branch protection on main",
+      "credential": "agent token (fine-grained PAT, GH_TOKEN)",
+      "permission_exercised": "Administration",
+      "expected": "blocked",
+      "observed": {
+        "at": "2026-11-03T21:07:23Z",
+        "exit_code": 1,
+        "http": "HTTP 403",
+        "message": "Resource not accessible by personal access token"
+      },
+      "outcome": "blocked",
+      "result": "pass"
+    },
+    {
+      "id": "AC3a-change-repo-settings",
+      "acceptance_criterion": "AC3",
+      "attempt": "change repository settings (no-op description write)",
+      "credential": "agent token (fine-grained PAT, GH_TOKEN)",
+      "permission_exercised": "Administration",
+      "expected": "blocked",
+      "observed": {
+        "at": "2026-11-03T21:07:24Z",
+        "exit_code": 1,
+        "http": "HTTP 403",
+        "message": "Resource not accessible by personal access token"
+      },
+      "outcome": "blocked",
+      "result": "pass"
+    },
+    {
+      "id": "AC3a-change-protection",
+      "acceptance_criterion": "AC3",
+      "attempt": "change branch protection (enforce_admins)",
+      "credential": "agent token (fine-grained PAT, GH_TOKEN)",
+      "permission_exercised": "Administration",
+      "expected": "blocked",
+      "observed": {
+        "at": "2026-11-03T21:07:25Z",
+        "exit_code": 1,
+        "http": "HTTP 404",
+        "message": "Not Found"
+      },
+      "outcome": "blocked",
+      "result": "pass"
+    },
+    {
+      "id": "AC3b-list-secrets",
+      "acceptance_criterion": "AC3",
+      "attempt": "list Actions secrets",
+      "credential": "agent token (fine-grained PAT, GH_TOKEN)",
+      "permission_exercised": "Secrets",
+      "expected": "blocked",
+      "observed": {
+        "at": "2026-11-03T21:07:25Z",
+        "exit_code": 1,
+        "http": "HTTP 403",
+        "message": "Resource not accessible by personal access token"
+      },
+      "outcome": "blocked",
+      "result": "pass"
+    },
+    {
+      "id": "AC3b-create-deployment",
+      "acceptance_criterion": "AC3",
+      "attempt": "create a deployment",
+      "credential": "agent token (fine-grained PAT, GH_TOKEN)",
+      "permission_exercised": "Deployments",
+      "expected": "blocked",
+      "observed": {
+        "at": "2026-11-03T21:07:26Z",
+        "exit_code": 1,
+        "http": "HTTP 403",
+        "message": "Resource not accessible by personal access token"
+      },
+      "outcome": "blocked",
+      "result": "pass"
+    },
+    {
+      "id": "AC3c-push-main-owner-ssh",
+      "acceptance_criterion": "AC3",
+      "attempt": "git push of a new commit directly to refs/heads/main",
+      "credential": "owner SSH key (repository admin)",
+      "expected": "blocked",
+      "observed": {
+        "at": "2026-11-03T21:07:29Z",
+        "message": [
+          "remote: error: GH006: Protected branch update failed for refs/heads/main.",
+          "remote: - Changes must be made through a pull request.",
+          "remote: - 4 of 4 required status checks are expected.",
+          "! [remote rejected] HEAD -> main (protected branch hook declined)"
+        ],
+        "main_before": "86335331bbe58c8561aebed611872136aac01a4f",
+        "main_after": "86335331bbe58c8561aebed611872136aac01a4f"
+      },
+      "outcome": "blocked",
+      "result": "pass"
+    },
+    {
+      "id": "AC3c-push-main-agent-token",
+      "acceptance_criterion": "AC3",
+      "attempt": "git push of a new commit directly to refs/heads/main",
+      "credential": "agent token over HTTPS (via gh credential helper)",
+      "expected": "blocked",
+      "observed": {
+        "at": "2026-11-03T21:07:33Z",
+        "message": [
+          "remote: error: GH006: Protected branch update failed for refs/heads/main.",
+          "remote: - Changes must be made through a pull request.",
+          "remote: - 4 of 4 required status checks are expected.",
+          "! [remote rejected] HEAD -> main (protected branch hook declined)"
+        ],
+        "main_before": "86335331bbe58c8561aebed611872136aac01a4f",
+        "main_after": "86335331bbe58c8561aebed611872136aac01a4f"
+      },
+      "outcome": "blocked",
+      "result": "pass"
+    },
+    {
+      "id": "AC4-stage-gate-json",
+      "acceptance_criterion": "AC4",
+      "attempt": "stage a change to .agents/gate.json (disable lint)",
+      "enforced_by": "the-gibson scripts/repo-boundary-guard.sh (installed as git on PATH, as scripts/loop.sh does)",
+      "expected": "blocked",
+      "observed": {
+        "at": "2026-11-03T21:07:50Z",
+        "state": "staged=[]",
+        "message": "gibson repo-boundary guard: runner cannot stage harness control-plane file '.agents/gate.json'"
+      },
+      "outcome": "blocked",
+      "result": "pass"
+    },
+    {
+      "id": "AC4-git-outside-target",
+      "acceptance_criterion": "AC4",
+      "attempt": "run git in a repository other than the target",
+      "enforced_by": "the-gibson scripts/repo-boundary-guard.sh (installed as git on PATH, as scripts/loop.sh does)",
+      "expected": "blocked",
+      "observed": {
+        "at": "2026-11-03T21:07:51Z",
+        "state": "observed=~/Code/the-gibson",
+        "message": "gibson repo-boundary guard: git command ran outside target repo: expected '~/Code/wt-proof-push' (resolved '~/Code/wt-proof-push'), observed '~/Code/the-gibson'"
+      },
+      "outcome": "blocked",
+      "result": "pass"
+    },
+    {
+      "id": "CTRL-read-check-runs",
+      "acceptance_criterion": "control",
+      "attempt": "read check runs on main (public repo)",
+      "credential": "agent token (fine-grained PAT, GH_TOKEN)",
+      "permission_exercised": "Metadata/public",
+      "expected": "allowed",
+      "observed": {
+        "at": "2026-11-03T21:07:27Z",
+        "exit_code": 0,
+        "http": "HTTP 200",
+        "message": "ok"
+      },
+      "outcome": "allowed",
+      "result": "pass"
+    },
+    {
+      "id": "CTRL-read-pr",
+      "acceptance_criterion": "control",
+      "attempt": "read pull request #12",
+      "credential": "agent token (fine-grained PAT, GH_TOKEN)",
+      "permission_exercised": "Pull requests",
+      "expected": "allowed",
+      "observed": {
+        "at": "2026-11-03T21:07:27Z",
+        "exit_code": 0,
+        "http": "HTTP 200",
+        "message": "ok"
+      },
+      "outcome": "allowed",
+      "result": "pass"
+    },
+    {
+      "id": "CTRL-normal-commit",
+      "acceptance_criterion": "AC4",
+      "attempt": "ordinary commit (README) under the guard",
+      "enforced_by": "the-gibson scripts/repo-boundary-guard.sh (installed as git on PATH, as scripts/loop.sh does)",
+      "expected": "allowed",
+      "observed": {
+        "at": "2026-11-03T21:07:51Z",
+        "state": "HEAD=b6fbf7a",
+        "message": "proof(#11): normal commit under guard"
+      },
+      "outcome": "allowed",
+      "result": "pass"
+    }
+  ],
+  "summary": {
+    "total": 12,
+    "pass": 12,
+    "fail": 0
+  }
+}
