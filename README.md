@@ -8,9 +8,13 @@ A small Task Management API, built by AI agents through
 
 - Node.js 22.18 or later
 
-## Run the checks (the green gate)
+## Setup (once per clone)
 
     npm ci
+    git config core.hooksPath .githooks   # enforces Signed-off-by on every commit
+
+## Run the checks (the green gate)
+
     npm run typecheck
     npm run lint
     npm test
