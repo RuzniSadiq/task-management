@@ -1,0 +1,14 @@
+{
+  "repo": "RuzniSadiq/task-management",
+  "model": "tag-pin",
+  "defaultBranch": "main",
+  "productionBranch": "main",
+  "requiredContexts": [
+    "gate",
+    "security-fast",
+    "test-integrity",
+    "DCO"
+  ],
+  "productionEnvironment": "release",
+  "reviewerLogin": "ruzni-reviewer"
+}
