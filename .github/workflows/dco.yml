@@ -1,0 +1,107 @@
+# DCO sign-off check — adapted from The Gibson's own CI
+# (the-gibson .github/workflows/gibson-self-gate.yml:39-116, commit 722780b, step "DCO trailer check").
+# The run: block is verbatim. Changes: own workflow, job named DCO, pull_request only,
+# permissions/concurrency per the-gibson docs/CONVENTIONS.md §3.1–3.3.
+# Checks every PR commit carries a Signed-off-by trailer. Does NOT check that the
+# sign-off email matches the commit author.
+name: dco
+
+on:
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: dco-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  DCO:
+    name: DCO
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: DCO trailer check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" != "pull_request" ]; then
+            echo "::notice::DCO trailer check skipped on ${EVENT_NAME} (not a pull_request)"
+            echo "DCO trailer check skipped on ${EVENT_NAME} (not a pull_request)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ -z "${BASE_SHA:-}" ]; then
+            echo "error: pull_request base SHA is empty; cannot walk BASE_SHA..HEAD_SHA" >&2
+            exit 1
+          fi
+          if [ -z "${HEAD_SHA:-}" ]; then
+            echo "error: pull_request head SHA is empty; cannot walk BASE_SHA..HEAD_SHA" >&2
+            exit 1
+          fi
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            echo "error: cannot resolve pull_request base SHA" >&2
+            exit 1
+          fi
+          if ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
+            echo "error: cannot resolve pull_request head SHA" >&2
+            exit 1
+          fi
+          unsigned=""
+          exempt=0
+          shas=$(git rev-list "${BASE_SHA}..${HEAD_SHA}") || {
+            echo "error: git rev-list ${BASE_SHA}..${HEAD_SHA} failed" >&2
+            exit 1
+          }
+          for sha in $shas; do
+            [ -n "$sha" ] || continue
+            body=$(git log -1 --format=%B "$sha") || {
+              echo "error: cannot read commit message for ${sha}" >&2
+              exit 1
+            }
+            trailers=$(printf '%s\n' "$body" | git interpret-trailers --parse) || {
+              echo "error: git interpret-trailers --parse failed for ${sha}" >&2
+              exit 1
+            }
+            if ! printf '%s\n' "$trailers" | grep '^Signed-off-by:' >/dev/null; then
+              # Dependabot cannot sign off (#554). The exemption is per COMMIT, never per PR:
+              # GitHub lets anyone with push access add commits to a Dependabot PR, so a PR-level
+              # skip would green-light an unsigned human commit. A commit is exempt only when the
+              # PR author is dependabot[bot] AND GitHub's own record of the commit says: author
+              # dependabot[bot], COMMITTER web-flow (GitHub itself), signature verified. Dependabot
+              # commits are created and signed by GitHub, so that is the shape of every real one
+              # (checked against a live Dependabot commit). `verified` alone is not enough: a human
+              # can set the Dependabot author email and sign with their own key, which GitHub also
+              # calls verified, but then the committer is the human, not web-flow. Local commit
+              # metadata is never trusted. Residual: someone with write access who deliberately
+              # forges an author through GitHub's contents API gets a web-flow commit; the DCO check
+              # certifies contributions, it does not defend against a malicious maintainer.
+              if [ "${PR_AUTHOR:-}" = "dependabot[bot]" ]; then
+                rec=$(gh api "repos/${REPO}/commits/${sha}" --jq '[(.author.login // ""), (.committer.login // ""), (.commit.verification.verified // false)] | @tsv' 2>/dev/null) || rec=""
+                if [ "$rec" = "$(printf 'dependabot[bot]\tweb-flow\ttrue')" ]; then
+                  echo "::notice::DCO exempt: ${sha} is a GitHub-signed dependabot[bot] commit on a dependabot[bot] pull request"
+                  echo "DCO exempt: ${sha} is a GitHub-signed dependabot[bot] commit" >> "$GITHUB_STEP_SUMMARY"
+                  exempt=$((exempt + 1))
+                  continue
+                fi
+              fi
+              unsigned="${unsigned}${sha}"$'\n'
+            fi
+          done
+          if [ -n "$unsigned" ]; then
+            echo "error: commit(s) missing Signed-off-by trailer:" >&2
+            printf '%s' "$unsigned" >&2
+            exit 1
+          fi
+          echo "DCO: every commit in ${BASE_SHA}..${HEAD_SHA} has a Signed-off-by trailer (${exempt} exempt as GitHub-signed dependabot[bot] commits)"
