@@ -18,19 +18,28 @@ export type Decision =
   | { action: "review"; author: Vendor; reviewer: Vendor }
   | { action: "skip"; reason: string };
 
-/** The single Agent-Vendor declared across a PR's commits, or why there isn't one. */
+/**
+ * The single Agent-Vendor declared across a PR's commits, or why there isn't one. Every commit
+ * must declare one; any line whose key is Agent-Vendor must carry exactly one known vendor
+ * (a malformed line could otherwise hide a second vendor); all commits must agree.
+ */
 export function authorVendor(messages: string[]): { vendor: Vendor } | { reason: string } {
+  if (messages.length === 0) return { reason: "no commits" };
   const found = new Set<string>();
-  for (const message of messages) {
-    for (const match of message.matchAll(/^Agent-Vendor:[ \t]*(\S+)[ \t]*$/gim)) {
-      if (match[1] !== undefined) found.add(match[1].toLowerCase());
+  for (const [i, message] of messages.entries()) {
+    const lines = [...message.matchAll(/^[ \t]*agent-vendor[ \t]*:(.*)$/gim)].map((m) => (m[1] ?? "").trim());
+    if (lines.length === 0) return { reason: `commit ${i + 1} has no Agent-Vendor trailer` };
+    for (const value of lines) {
+      const v = value.toLowerCase();
+      if (!/^\S+$/.test(v)) return { reason: `commit ${i + 1} has a malformed Agent-Vendor line: '${value}'` };
+      if (!VENDORS.includes(v)) return { reason: `unknown vendor: ${v}` };
+      found.add(v);
     }
   }
   const vendors = [...found].sort();
-  const only = vendors[0];
-  if (only === undefined) return { reason: "no Agent-Vendor trailer on any commit" };
   if (vendors.length > 1) return { reason: `mixed vendors: ${vendors.join(",")}` };
-  return VENDORS.includes(only) ? { vendor: only as Vendor } : { reason: `unknown vendor: ${only}` };
+  const only = vendors[0];
+  return only === undefined ? { reason: "no Agent-Vendor trailer on any commit" } : { vendor: only as Vendor };
 }
 
 /** Law 5: the reviewer is always a different vendor from the author. */
@@ -44,6 +53,7 @@ export function pickReviewer(author: Vendor): Vendor {
  * by runs that disagree, recency cannot be established and the check fails closed.
  */
 export function requiredChecksGreen(runs: CheckRun[], required: string[]): { ok: true } | { ok: false; reason: string } {
+  if (required.length === 0) return { ok: false, reason: "no required checks configured" };
   for (const name of required) {
     const named = runs.filter((r) => r.name === name);
     if (named.length === 0) return { ok: false, reason: `required check '${name}' has not run` };
@@ -68,27 +78,43 @@ export function reviewedAtHead(reviews: Review[], login: string, head: string): 
     && (r.state === "APPROVED" || r.state === "CHANGES_REQUESTED"));
 }
 
-/** Tier from the PR's tier-a/b/c label; the Gibson caps file supplies the default. */
-export function tierOf(labels: string[], caps: Caps): string {
+/**
+ * Tier from the PR's tier-* label; with none, the Gibson caps file's default. Undefined when
+ * ambiguous (two different tiers) or invalid (a tier-* label other than a/b/c): fail closed.
+ */
+export function tierOf(labels: string[], caps: Caps): string | undefined {
+  const tiers = new Set<string>();
   for (const label of labels) {
-    const m = /^tier-([abc])$/i.exec(label);
-    if (m?.[1] !== undefined) return m[1].toUpperCase();
+    const m = /^tier-(.*)$/i.exec(label.trim());
+    if (m === null) continue;
+    const t = (m[1] ?? "").toUpperCase();
+    if (!/^[ABC]$/.test(t)) return undefined;
+    tiers.add(t);
   }
-  return String(caps.default ?? "A");
+  if (tiers.size > 1) return undefined;
+  const [only] = [...tiers];
+  if (only !== undefined) return only;
+  const fallback = caps.default;
+  return typeof fallback === "string" && /^[ABC]$/.test(fallback) ? fallback : undefined;
 }
 
-/** The tier's cap from the-gibson config/review-round-caps.json, or undefined if missing or not a non-negative integer. */
+/** The tier's OWN cap from the-gibson config/review-round-caps.json (no borrowing another tier's), or undefined if missing or not a non-negative integer. */
 export function capOf(tier: string, caps: Caps): number | undefined {
-  const raw = caps[tier] ?? caps[String(caps.default ?? "A")];
+  if (!/^[ABC]$/.test(tier)) return undefined;
+  const raw = caps[tier];
   const cap = typeof raw === "number" ? raw : typeof raw === "string" && /^\d+$/.test(raw) ? Number(raw) : NaN;
   return Number.isInteger(cap) && cap >= 0 ? cap : undefined;
 }
 
-/** Per-tier cap on CHANGES_REQUESTED rounds. An unknown cap counts as reached (fail closed). */
+/**
+ * Per-tier cap on review rounds. A round is a CHANGES_REQUESTED verdict by the reviewer, and a
+ * DISMISSED one also counts: GitHub turns a dismissed review into DISMISSED, so dismissing
+ * rejections must not reset the cap. An unknown cap counts as reached (fail closed).
+ */
 export function roundCapReached(reviews: Review[], login: string, tier: string, caps: Caps): boolean {
   const cap = capOf(tier, caps);
   if (cap === undefined) return true;
-  const rounds = reviews.filter((r) => r.user?.login === login && r.state === "CHANGES_REQUESTED").length;
+  const rounds = reviews.filter((r) => r.user?.login === login && (r.state === "CHANGES_REQUESTED" || r.state === "DISMISSED")).length;
   return rounds >= cap;
 }
 
@@ -125,12 +151,16 @@ export function capExceptionApplies(value: string | undefined, pr: number, head:
 
 /** Fail closed: review only when every condition is positively established. */
 export function decide(pr: PrFacts, opts: { login: string; required: string[]; caps: Caps; attempted: boolean; capException?: string }): Decision {
+  if (!Number.isInteger(pr.number) || pr.number <= 0) return { action: "skip", reason: "invalid PR number" };
+  if (!/^[0-9a-f]{40}$/.test(pr.head)) return { action: "skip", reason: "invalid head SHA" };
+  if (opts.login.trim() === "") return { action: "skip", reason: "reviewer login not configured" };
   if (pr.state !== "OPEN") return { action: "skip", reason: `PR is ${pr.state.toLowerCase()}` };
   if (pr.isDraft) return { action: "skip", reason: "draft" };
   if (pr.baseRefName !== "main") return { action: "skip", reason: `base is ${pr.baseRefName}, not main` };
   if (reviewedAtHead(pr.reviews, opts.login, pr.head)) return { action: "skip", reason: "already reviewed at this head" };
   if (opts.attempted) return { action: "skip", reason: "already attempted at this head (one attempt per head)" };
   const tier = tierOf(pr.labels, opts.caps);
+  if (tier === undefined) return { action: "skip", reason: "tier unknown (conflicting or invalid tier labels, or no valid default)" };
   // a broken caps config is never lifted, not even by a captain's exception
   if (capOf(tier, opts.caps) === undefined) return { action: "skip", reason: `Tier ${tier} round cap unknown (invalid review-round-caps config)` };
   // The exception is checked here, against this PR's number and head: a caller cannot widen it.
@@ -163,16 +193,18 @@ export function readEnv(env: NodeJS.ProcessEnv, secrets: string[] = []): NodeJS.
 
 /** Environment for formal-review.sh only: the one process that holds the reviewer token. */
 export function publisherEnv(env: NodeJS.ProcessEnv, token: string): NodeJS.ProcessEnv {
+  if (token.trim() === "") throw new Error("reviewer token is empty");
   return { ...readEnv(env, [token]), GH_REVIEWER_TOKEN: token };
 }
 
 /**
- * The Gibson's slot-authority rule (second-opinion.sh #290), applied to its
- * "slot:<name> state:<state>" lines: any request-changes → request-changes; every slot
- * approve → approve; anything else (no slots, no-verdict, error) → no formal review.
+ * The Gibson's slot-authority rule (second-opinion.sh #290), applied only to its own status
+ * lines, exactly "second-opinion.sh: slot:<name> state:<state>" (second-opinion.sh:479), so
+ * text elsewhere in the output cannot pose as a verdict: any request-changes → request-changes;
+ * every slot approve → approve; anything else (no slots, no-verdict, error) → no formal review.
  */
 export function slotEvent(output: string): "approve" | "request-changes" | undefined {
-  const states = [...output.matchAll(/slot:\S+ state:(\S+)/g)].map((m) => m[1]);
+  const states = [...output.matchAll(/^second-opinion\.sh: slot:\S+ state:(\S+)$/gm)].map((m) => m[1]);
   if (states.includes("request-changes")) return "request-changes";
   if (states.length > 0 && states.every((st) => st === "approve")) return "approve";
   return undefined;
