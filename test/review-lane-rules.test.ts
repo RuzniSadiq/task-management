@@ -106,6 +106,11 @@ test("AC5: the Gibson kill switch (gibson/HALT or GIBSON_HALT=1) stops the lane"
     mkdirSync(join(dir, "gibson"));
     writeFileSync(join(dir, "gibson", "HALT"), "");
     assert.equal(halted(dir, {}), true);
+    // the root is explicit: a HALT file elsewhere (e.g. the current folder) is not this repo's
+    const other = join(dir, "other-repo");
+    mkdirSync(other);
+    assert.equal(halted(other, {}), false);
+    assert.equal(halted("", {}), true); // unknown root fails closed
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -192,6 +197,8 @@ test("sweep: ambiguous or malformed input fails closed in every rule", () => {
   assert.ok("reason" in authorVendor(["x\n\nAgent-Vendor:\n"]));
   assert.ok("reason" in authorVendor(["x\n\nagent-vendor : codex\n", claudeCommit]));
   assert.deepEqual(authorVendor([claudeCommit, "y\n\nAgent-Vendor:  CLAUDE \n"]), { vendor: "claude" });
+  // exactly one Agent-Vendor line per commit, even if the duplicates agree
+  assert.ok("reason" in authorVendor(["x\n\nAgent-Vendor: claude\nAgent-Vendor: claude\n"]));
   // no required checks configured is not "all green"
   assert.equal(requiredChecksGreen(green, []).ok, false);
   assert.equal(decide(base, { ...opts, required: [] }).action, "skip");

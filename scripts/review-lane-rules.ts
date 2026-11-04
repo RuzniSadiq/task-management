@@ -20,7 +20,7 @@ export type Decision =
 
 /**
  * The single Agent-Vendor declared across a PR's commits, or why there isn't one. Every commit
- * must declare one; any line whose key is Agent-Vendor must carry exactly one known vendor
+ * must declare exactly one; any line whose key is Agent-Vendor must carry exactly one known vendor
  * (a malformed line could otherwise hide a second vendor); all commits must agree.
  */
 export function authorVendor(messages: string[]): { vendor: Vendor } | { reason: string } {
@@ -29,6 +29,7 @@ export function authorVendor(messages: string[]): { vendor: Vendor } | { reason:
   for (const [i, message] of messages.entries()) {
     const lines = [...message.matchAll(/^[ \t]*agent-vendor[ \t]*:(.*)$/gim)].map((m) => (m[1] ?? "").trim());
     if (lines.length === 0) return { reason: `commit ${i + 1} has no Agent-Vendor trailer` };
+    if (lines.length > 1) return { reason: `commit ${i + 1} has ${lines.length} Agent-Vendor lines (exactly one required)` };
     for (const value of lines) {
       const v = value.toLowerCase();
       if (!/^\S+$/.test(v)) return { reason: `commit ${i + 1} has a malformed Agent-Vendor line: '${value}'` };
@@ -210,7 +211,12 @@ export function slotEvent(output: string): "approve" | "request-changes" | undef
   return undefined;
 }
 
-/** The Gibson kill switch: a gibson/HALT file, or GIBSON_HALT=1. */
-export function halted(dir = ".", env: NodeJS.ProcessEnv = process.env): boolean {
-  return existsSync(join(dir, "gibson", "HALT")) || env.GIBSON_HALT === "1";
+/**
+ * The Gibson kill switch: a gibson/HALT file in the given repository root, or GIBSON_HALT=1.
+ * The root is required (no "current folder" default), so a caller started from another
+ * directory cannot miss the repository's HALT file.
+ */
+export function halted(repoRoot: string, env: NodeJS.ProcessEnv): boolean {
+  if (repoRoot.trim() === "") return true; // unknown root: fail closed (treat as halted)
+  return existsSync(join(repoRoot, "gibson", "HALT")) || env.GIBSON_HALT === "1";
 }
