@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { authorVendor, capExceptionApplies, decide, halted, pickReviewer, publisherEnv, readEnv, requiredChecksGreen, roundCapReached, slotEvent, tierOf, verifyPublished } from "../scripts/review-lane-rules.ts";
-import type { CheckRun, PrFacts, Review } from "../scripts/review-lane-rules.ts";
+import { authorVendor, capExceptionApplies, capOf, decide, halted, pickReviewer, publisherEnv, readEnv, requiredChecksGreen, roundCapReached, slotEvent, tierOf, verifyPublished } from "../scripts/review-lane-rules.ts";
+import type { Caps, CheckRun, PrFacts, Review } from "../scripts/review-lane-rules.ts";
 
 const caps = { A: 1, B: 2, C: 3, default: "A" };
 const required = ["gate", "security-fast", "test-integrity", "DCO"];
@@ -147,4 +147,19 @@ test("AC8: the rules module is pure: no child processes, no network, no writes",
   assert.deepEqual(imports.sort(), ["node:fs", "node:path"]);
   assert.match(src, /^import \{ existsSync \} from "node:fs";$/m); // read-only fs use (halted)
   assert.doesNotMatch(src, /child_process|\bspawn|(?<!\.)\bexec(Sync|File)?\(|\bfetch\(|https?:\/\/|writeFileSync|appendFileSync|mkdirSync|rmSync/);
+});
+
+test("round cap: a missing or invalid cap fails closed, even with a captain's exception", () => {
+  assert.equal(capOf("C", caps), 3);
+  assert.equal(capOf("C", { C: "3", default: "A" }), 3);
+  const broken: Caps[] = [{ C: "oops", default: "A" }, { C: -1, default: "A" }, { C: 1.5, default: "A" }, { C: Number.NaN, default: "A" }, { default: "Z" }];
+  for (const bad of broken) {
+    assert.equal(capOf("C", bad), undefined);
+    assert.equal(roundCapReached([], login, "C", bad), true); // no rounds yet, still "reached"
+    const pr = { ...base, labels: ["tier-c"] };
+    assert.equal(decide(pr, { ...opts, caps: bad }).action, "skip");
+    assert.equal(decide(pr, { ...opts, caps: bad, capException: `19@${head}` }).action, "skip");
+  }
+  // a valid cap still allows the first review
+  assert.equal(decide({ ...base, labels: ["tier-c"] }, opts).action, "review");
 });

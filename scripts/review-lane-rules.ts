@@ -77,9 +77,17 @@ export function tierOf(labels: string[], caps: Caps): string {
   return String(caps.default ?? "A");
 }
 
-/** the-gibson config/review-round-caps.json: per-tier cap on CHANGES_REQUESTED rounds. */
+/** The tier's cap from the-gibson config/review-round-caps.json, or undefined if missing or not a non-negative integer. */
+export function capOf(tier: string, caps: Caps): number | undefined {
+  const raw = caps[tier] ?? caps[String(caps.default ?? "A")];
+  const cap = typeof raw === "number" ? raw : typeof raw === "string" && /^\d+$/.test(raw) ? Number(raw) : NaN;
+  return Number.isInteger(cap) && cap >= 0 ? cap : undefined;
+}
+
+/** Per-tier cap on CHANGES_REQUESTED rounds. An unknown cap counts as reached (fail closed). */
 export function roundCapReached(reviews: Review[], login: string, tier: string, caps: Caps): boolean {
-  const cap = Number(caps[tier] ?? caps[String(caps.default ?? "A")] ?? 1);
+  const cap = capOf(tier, caps);
+  if (cap === undefined) return true;
   const rounds = reviews.filter((r) => r.user?.login === login && r.state === "CHANGES_REQUESTED").length;
   return rounds >= cap;
 }
@@ -123,6 +131,8 @@ export function decide(pr: PrFacts, opts: { login: string; required: string[]; c
   if (reviewedAtHead(pr.reviews, opts.login, pr.head)) return { action: "skip", reason: "already reviewed at this head" };
   if (opts.attempted) return { action: "skip", reason: "already attempted at this head (one attempt per head)" };
   const tier = tierOf(pr.labels, opts.caps);
+  // a broken caps config is never lifted, not even by a captain's exception
+  if (capOf(tier, opts.caps) === undefined) return { action: "skip", reason: `Tier ${tier} round cap unknown (invalid review-round-caps config)` };
   // The exception is checked here, against this PR's number and head: a caller cannot widen it.
   if (roundCapReached(pr.reviews, opts.login, tier, opts.caps) && !capExceptionApplies(opts.capException, pr.number, pr.head)) {
     return { action: "skip", reason: `Tier ${tier} round cap reached — captain decision required` };
