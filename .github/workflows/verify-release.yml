@@ -18,6 +18,11 @@ on:
   workflow_dispatch:
   release:
     types: [published, edited]
+  # Releases created by release.yml use GITHUB_TOKEN, which does not emit a `release` event.
+  # Run after the release workflow completes so a fresh release is verified immediately.
+  workflow_run:
+    workflows: [release]
+    types: [completed]
 
 permissions: {}
 

@@ -298,8 +298,10 @@ export function ghCli(repo: string): Gh {
       gh(["label", "create", FINDING_LABEL, "--repo", repo, "--force", "--color", "b60205",
         "--description", "Detective control finding (verify-release)"]);
     },
-    openFindings: () => JSON.parse(gh(["issue", "list", "--repo", repo, "--state", "open", "--label", FINDING_LABEL,
-      "--limit", "200", "--json", "number,title"]).toString("utf8")) as Issue[],
+    // Paginated (slurped) so a finding beyond the first page is still found and never duplicated.
+    openFindings: () => (JSON.parse(gh(["api", "--paginate", "--slurp",
+      `repos/${repo}/issues?state=open&labels=${FINDING_LABEL}&per_page=100`]).toString("utf8")) as Issue[][]).flat()
+      .map((i) => ({ number: i.number, title: i.title })),
     createIssue: (title, body) => {
       const url = gh(["issue", "create", "--repo", repo, "--title", title, "--label", FINDING_LABEL, "--body-file", "-"], body).toString("utf8").trim();
       const n = Number(/\/issues\/(\d+)\s*$/.exec(url)?.[1]);

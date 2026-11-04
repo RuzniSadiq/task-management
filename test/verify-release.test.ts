@@ -414,7 +414,7 @@ test("two failing releases in one run open two distinct findings", () => {
 const workflow = readFileSync(fileURLToPath(new URL("../.github/workflows/verify-release.yml", import.meta.url)), "utf8");
 
 test("AC1: workflow triggers on a daily schedule, workflow_dispatch and release published/edited", () => {
-  assert.match(workflow, /^on:\n {2}schedule:\n {4}- cron: "\d{1,2} \d{1,2} \* \* \*"\n {2}workflow_dispatch:\n {2}release:\n {4}types: \[published, edited\]\n/m);
+  assert.match(workflow, /^on:\n {2}schedule:\n {4}- cron: "\d{1,2} \d{1,2} \* \* \*"\n {2}workflow_dispatch:\n {2}release:\n {4}types: \[published, edited\]\n(?:\s*#.*\n)*\s{2}workflow_run:\n {4}workflows: \[release\]\n {4}types: \[completed\]\n/m);
   assert.doesNotMatch(workflow, /pull_request_target/);
 });
 
@@ -451,6 +451,11 @@ const st = JSON.parse(fs.readFileSync(process.env.FAKE_GH_STATE, "utf8"));
 const a = process.argv.slice(2);
 const log = (stdin) => fs.appendFileSync(process.env.FAKE_GH_LOG, JSON.stringify({ args: a, stdin }) + "\\n");
 function main() {
+  if (a[0] === "api" && a[1] === "--paginate" && a[2] === "--slurp" && /\\/issues\\?/.test(a[3])) {
+    log(null);
+    process.stdout.write(JSON.stringify([st.open.slice(0, 1), st.open.slice(1)]));
+    return 0;
+  }
   if (a[0] === "api" && a[1] === "--paginate") {
     log(null);
     if (st.failReleases) { process.stderr.write("HTTP 503: Service Unavailable\\n"); return 1; }
@@ -472,7 +477,6 @@ function main() {
     return 1;
   }
   if (a[0] === "label" && a[1] === "create") { log(null); return 0; }
-  if (a[0] === "issue" && a[1] === "list") { log(null); process.stdout.write(JSON.stringify(st.open)); return 0; }
   if (a[0] === "issue" && (a[1] === "create" || a[1] === "comment")) {
     log(fs.readFileSync(0, "utf8"));
     if (st.failIssueWrites) { process.stderr.write("HTTP 502: Bad Gateway\\n"); return 1; }
@@ -525,7 +529,7 @@ function runCli(s: CliState, extra: string[] = []) {
 }
 
 const RUN_URL = "https://github.com/o/r/actions/runs/4242";
-const writes = (calls: GhCall[]) => calls.filter((c) => c.args[0] === "label" || (c.args[0] === "issue" && c.args[1] !== "list"));
+const writes = (calls: GhCall[]) => calls.filter((c) => c.args[0] === "label" || c.args[0] === "issue");
 
 test("CLI clean pass: exit 0, evidence file written, no issue writes", () => {
   const r = runCli({});
@@ -615,5 +619,5 @@ test("B2 CLI: tampered asset and the finding cannot be filed: exit 1, evidence a
 test("N1 CLI --dry-run never comments, even when an open finding would match", () => {
   const r = runCli({ served: EVIL, open: [{ number: 77, title: findingTitle("v0.1.0") }] }, ["--dry-run"]);
   assert.equal(r.calls.filter((c) => c.args[0] === "issue" && c.args[1] === "comment").length, 0);
-  assert.equal(r.calls.filter((c) => c.args[0] === "issue" && c.args[1] === "list").length, 0);
+  assert.equal(r.calls.filter((c) => c.args[0] === "api" && /\/issues\?/.test(String(c.args[3]))).length, 0);
 });
