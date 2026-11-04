@@ -27,6 +27,23 @@ import type { Caps, CheckRun, Decision, PrFacts, Review } from "./review-lane-ru
 export const GIBSON_BLOCKER_RULE = "A blocker names a reachable trigger, wrong outcome and file:line or unmet acceptance criterion. "
   + "Nits, speculative risks and optional improvements are notes; a real defect is still blocking when labeled \"Minor\".";
 
+/**
+ * The report is what gets posted, so it must contain the verdict the slot line announced: at least one
+ * "1. VERDICT:" line, all APPROVE for an approval, at least one REQUEST_CHANGES for a request for changes.
+ * An empty, missing or contradictory report is never published (round 5).
+ */
+export function reportMatches(report: string | undefined, event: "approve" | "request-changes"): boolean {
+  if (report === undefined) return false;
+  const verdicts = [...report.matchAll(/^1\. VERDICT: (APPROVE|REQUEST_CHANGES)[ \t]*$/gm)].map((m) => m[1]);
+  if (verdicts.length === 0) return false;
+  return event === "approve" ? verdicts.every((x) => x === "APPROVE") : verdicts.includes("REQUEST_CHANGES");
+}
+
+/** Dry-run never touches the reviewer token, in any mode (watch, --once or --pr). */
+export function tokenFor(dryRun: boolean, load: () => string): string | undefined {
+  return dryRun ? undefined : load();
+}
+
 /** Every side effect the runner has. Tests substitute a fake to check what happens, and in what order. */
 export interface Io {
   env: NodeJS.ProcessEnv;
@@ -234,6 +251,8 @@ export class Lane {
       if (halted(this.cfg.root, this.io.env)) { outcome = "halted during the review: not published, attempt not consumed"; return; }
       // a reviewer that ran but returned no verdict allows one retry (review-protocol)
       if (event === undefined) { this.mark(`${v.number}@${reviewed.head}#no-verdict`); outcome = `no formal verdict (exit ${r.code})`; return; }
+      // the report is the review that will be posted: it must carry the verdict the slot line announced
+      if (!reportMatches(this.io.read(out), event)) { this.mark(`${v.number}@${reviewed.head}#no-verdict`); outcome = "reviewer report is missing, empty or contradicts its verdict: not published"; return; }
       verdict = true;
       const p = this.publish(v.number, reviewed, event, out, () => { this.mark(`${v.number}@${reviewed.head}`); settled = true; });
       outcome = p.outcome;
@@ -392,7 +411,7 @@ async function main(argv: string[]): Promise<void> {
   const root = resolve(".");
   const cfg = loadConfig(root);
   const io = realIo();
-  const lane = new Lane(cfg, io, dryRun ? undefined : reviewerToken(io)); // token loaded once, before any read
+  const lane = new Lane(cfg, io, tokenFor(dryRun, () => reviewerToken(io))); // loaded once, before any read; never in dry-run
   if (pr !== undefined || argv.includes("--once")) { lane.pass({ pr, dryRun }); return; }
   io.log(`watching ${cfg.repo} (reviewer=${cfg.login}, every 60s${dryRun ? ", dry-run" : ""}) — Ctrl-C or gibson/HALT to stop`);
   while (!halted(root, io.env)) {

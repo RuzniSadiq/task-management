@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { GIBSON_BLOCKER_RULE, Lane, fileLock } from "../scripts/review-lane.ts";
+import { GIBSON_BLOCKER_RULE, Lane, fileLock, reportMatches, tokenFor } from "../scripts/review-lane.ts";
 import type { Config, Io } from "../scripts/review-lane.ts";
 import type { Review } from "../scripts/review-lane-rules.ts";
 
@@ -16,7 +16,7 @@ const greenRuns = cfg.required.map((name, i) => ({ id: i + 1, name, status: "com
 
 interface Scenario {
   prs?: number[]; headNow?: string[]; wtHead?: string; wtBase?: string; fetchCode?: number; addCode?: number;
-  reviewerOut?: string; postReview?: boolean; commentDuringReview?: boolean; postSameSecond?: boolean; haltDuringReview?: boolean; haltDuringSetup?: boolean; readBackFails?: number; failView?: number; failViewAt?: number; baseNow?: string[]; haltAtPublish?: boolean; envExtra?: NodeJS.ProcessEnv;
+  reviewerOut?: string; postReview?: boolean; commentDuringReview?: boolean; postSameSecond?: boolean; haltDuringReview?: boolean; haltDuringSetup?: boolean; readBackFails?: number; failView?: number; failViewAt?: number; baseNow?: string[]; haltAtPublish?: boolean; envExtra?: NodeJS.ProcessEnv; report?: string | null;
 }
 
 /** A fake Io that records everything the runner does. */
@@ -65,6 +65,11 @@ function fake(sc: Scenario = {}) {
       if (cmd === "git" && args.includes("origin/main")) return { code: 0, out: `${sc.wtBase ?? base}\n`, err: "" };
       if (cmd === "bash") {
         events.push("reviewer");
+        // second-opinion.sh writes the report named by --out; by default it carries the verdict it announces
+        const outPath = args[args.indexOf("--out") + 1] ?? "";
+        const state = /state:(\S+)/.exec(sc.reviewerOut ?? "state:approve")?.[1];
+        const line = state === "request-changes" ? "REQUEST_CHANGES" : "APPROVE";
+        if (sc.report !== null) files.set(outPath, sc.report ?? `## Second opinion — codex\n\n1. VERDICT: ${line}\n\nbody\n`);
         if (sc.haltDuringReview === true) io.env.GIBSON_HALT = "1"; // the owner pulls the kill switch mid-review
         // an unrelated same-identity review appearing while the review runs (before publication)
         if (sc.commentDuringReview === true) reviews.push({ id: 50, user: { login: cfg.login }, state: "COMMENTED", commit_id: head, submitted_at: new Date(clock).toISOString() });
@@ -431,4 +436,39 @@ test("round 4: PR and issue text is fenced as untrusted data; nothing inside can
   const lastEnd = task.lastIndexOf("<<<END UNTRUSTED");
   assert.ok(task.indexOf(GIBSON_BLOCKER_RULE) > lastEnd);
   assert.ok(task.indexOf("OUTPUT FORMAT:") > lastEnd);
+});
+
+test("round 5: a report that is missing, empty or contradicts its verdict is never published, and gets one retry", () => {
+  for (const report of [null, "", "no verdict line here", "1. VERDICT: REQUEST_CHANGES\n"] as const) {
+    const f = fake({ report }); // the slot line says approve
+    const lane = new Lane(cfg, f.io, TOKEN);
+    lane.pass({ dryRun: false });
+    assert.equal(count(f, "formal-review"), 0, String(report));
+    assert.ok(f.events.some((e) => e.includes("report is missing, empty or contradicts")));
+    assert.equal(lane.attempted(7, head), false); // one retry left
+    lane.pass({ dryRun: false });
+    lane.pass({ dryRun: false });
+    assert.equal(count(f, "reviewer"), 2); // bounded
+  }
+  // and the matching report is published
+  const ok = fake();
+  new Lane(cfg, ok.io, TOKEN).pass({ dryRun: false });
+  assert.equal(count(ok, "formal-review"), 1);
+});
+
+test("round 5: reportMatches follows the verdict rules", () => {
+  assert.equal(reportMatches("1. VERDICT: APPROVE\n", "approve"), true);
+  assert.equal(reportMatches("1. VERDICT: APPROVE\n1. VERDICT: REQUEST_CHANGES\n", "approve"), false);
+  assert.equal(reportMatches("1. VERDICT: APPROVE\n1. VERDICT: REQUEST_CHANGES\n", "request-changes"), true);
+  assert.equal(reportMatches("**1. VERDICT: APPROVE**", "approve"), false); // the format is plain text, as the task asks
+  assert.equal(reportMatches(undefined, "approve"), false);
+});
+
+test("round 5: dry-run never loads the reviewer token, in any mode", () => {
+  let loads = 0;
+  const load = () => { loads++; return "tok"; };
+  assert.equal(tokenFor(true, load), undefined);
+  assert.equal(loads, 0);
+  assert.equal(tokenFor(false, load), "tok");
+  assert.equal(loads, 1);
 });
