@@ -83,6 +83,20 @@ describe("AC1 create a valid task", () => {
     const task = await store.create({ title: `  ${"x".repeat(200)}  ` });
     assert.equal(task.title.length, 200);
   });
+
+  test("characters are counted as code points: 200 emoji are accepted", async () => {
+    const store = await TaskStore.open(join(await freshDir(), "tasks.json"));
+    const title = "😀".repeat(200);
+    assert.equal(title.length, 400, "UTF-16 length is twice the character count");
+    const task = await store.create({ title });
+    assert.equal(task.title, title);
+  });
+
+  test("only leading and trailing whitespace is trimmed", async () => {
+    const store = await TaskStore.open(join(await freshDir(), "tasks.json"));
+    const task = await store.create({ title: "  a  b\tc  " });
+    assert.equal(task.title, "a  b\tc");
+  });
 });
 
 describe("AC2 invalid create input is rejected and nothing is written", () => {
@@ -90,10 +104,15 @@ describe("AC2 invalid create input is rejected and nothing is written", () => {
     ["empty title", { title: "" }],
     ["whitespace-only title", { title: " \t\n " }],
     ["title over 200 characters after trimming", { title: ` ${"x".repeat(201)} ` }],
+    ["title of 201 emoji (code points)", { title: "😀".repeat(201) }],
     ["non-string title (number)", { title: 42 }],
     ["non-string title (null)", { title: null }],
+    ["non-string title (array)", { title: ["a"] }],
+    ["non-string title (object)", { title: { toString: () => "a" } }],
     ["missing title", {}],
     ["unknown status", { title: "ok", status: "archived" }],
+    ["status with different case", { title: "ok", status: "TODO" }],
+    ["null status", { title: "ok", status: null }],
     ["non-string status", { title: "ok", status: 1 }],
   ];
 
@@ -158,6 +177,18 @@ describe("AC3 update status", () => {
     await assert.rejects(store.updateStatus(task.id, undefined), ValidationError);
     assert.deepEqual(await readFile(path), before);
     assert.deepEqual(store.list(), [task]);
+  });
+
+  test("updating one task leaves every other task unchanged, in memory and on disk", async () => {
+    const path = join(await freshDir(), "tasks.json");
+    const store = await TaskStore.open(path, { now: steppingClock() });
+    const a = await store.create({ title: "a" });
+    const b = await store.create({ title: "b" });
+    const c = await store.create({ title: "c" });
+    const updated = await store.updateStatus(b.id, "done");
+    assert.deepEqual(store.list(), [a, updated, c]);
+    const reopened = await TaskStore.open(path);
+    assert.deepEqual(reopened.list(), [a, updated, c]);
   });
 
   test("unknown id on an empty store does not create the file", async () => {
@@ -271,6 +302,20 @@ describe("AC6 atomic writes", () => {
       );
     },
   );
+
+  test("a write that fails at the rename step removes its temp file", async () => {
+    const dir = await freshDir();
+    const path = join(dir, "tasks.json");
+    const store = await TaskStore.open(path);
+    // Put a non-empty directory where the file should go, so rename() fails
+    // after the temp file has been written and synced.
+    await mkdir(path);
+    await writeFile(join(path, "blocker"), "x", "utf8");
+    await assert.rejects(store.create({ title: "lost" }));
+    assert.deepEqual(await readdir(dir), ["tasks.json"]);
+    assert.deepEqual(await readdir(path), ["blocker"]);
+    assert.deepEqual(store.list(), []);
+  });
 });
 
 describe("AC7 opening missing and corrupt files", () => {
@@ -339,5 +384,16 @@ describe("AC7 opening missing and corrupt files", () => {
     await writeFile(path, JSON.stringify({ tasks: [validTask] }), "utf8");
     const store = await TaskStore.open(path);
     assert.deepEqual(store.list(), [validTask]);
+  });
+});
+
+describe("AC8 repository hygiene", () => {
+  test(".gitignore ignores the data/ directory", async () => {
+    const gitignore = await readFile(join(import.meta.dirname, "..", ".gitignore"), "utf8");
+    const lines = gitignore.split(/\r?\n/).map((line) => line.trim());
+    assert.ok(
+      lines.includes("data/") || lines.includes("/data/"),
+      ".gitignore has a data/ entry",
+    );
   });
 });
