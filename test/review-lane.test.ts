@@ -14,7 +14,7 @@ const greenRuns = cfg.required.map((name, i) => ({ id: i + 1, name, status: "com
 
 interface Scenario {
   prs?: number[]; headNow?: string[]; wtHead?: string; wtBase?: string; fetchCode?: number; addCode?: number;
-  reviewerOut?: string; postReview?: boolean; commentDuringReview?: boolean; postSameSecond?: boolean; haltDuringReview?: boolean; haltDuringSetup?: boolean; readBackFails?: number; failView?: number; envExtra?: NodeJS.ProcessEnv;
+  reviewerOut?: string; postReview?: boolean; commentDuringReview?: boolean; postSameSecond?: boolean; haltDuringReview?: boolean; haltDuringSetup?: boolean; readBackFails?: number; failView?: number; failViewAt?: number; baseNow?: string[]; haltAtPublish?: boolean; envExtra?: NodeJS.ProcessEnv;
 }
 
 /** A fake Io that records everything the runner does. */
@@ -35,9 +35,12 @@ function fake(sc: Scenario = {}) {
       if (args[0] === "pr" && args[1] === "view") {
         const n = Number(args[2]);
         if (sc.failView === n) throw new Error("gh pr view failed");
-        const h = sc.headNow?.[views] ?? head;
-        views++;
-        return JSON.stringify({ number: n, state: "OPEN", isDraft: false, baseRefName: "main", baseRefOid: base, headRefOid: h,
+        const at = views++;
+        if (sc.failViewAt === at) throw new Error("gh pr view failed: HTTP 502");
+        if (sc.haltAtPublish === true && at === 1) io.env.GIBSON_HALT = "1"; // pulled during the pre-publication recheck
+        const h = sc.headNow?.[at] ?? head;
+        const b = sc.baseNow?.[at] ?? base;
+        return JSON.stringify({ number: n, state: "OPEN", isDraft: false, baseRefName: "main", baseRefOid: b, headRefOid: h,
           title: "t", body: "Closes #5", labels: [{ name: "tier-a" }], closingIssuesReferences: [{ number: 5 }] });
       }
       if (args[0] === "issue") return JSON.stringify({ title: "issue", body: "AC1: something" });
@@ -300,4 +303,39 @@ test("AC10: a kill switch pulled during setup stops the reviewer from starting",
   assert.deepEqual(attempts(f), []);
   assert.ok(f.events.some((e) => e.includes("halted before the reviewer started")));
   assert.equal(count(f, "worktree-remove"), 1);
+});
+
+test("AC5: a verdict that never reached publication (transient error, base moved) is retried once, not lost", () => {
+  // a GitHub error in the pre-publication recheck must not lock the head out with no review
+  const f = fake({ failViewAt: 1 }); // view 0 decides; view 1 is the pre-publication recheck
+  const lane = new Lane(cfg, f.io, TOKEN);
+  lane.pass({ dryRun: false });
+  assert.equal(count(f, "formal-review"), 0);
+  assert.equal(lane.attempted(7, head), false); // one retry left
+  lane.pass({ dryRun: false }); // the error was transient
+  assert.equal(count(f, "reviewer"), 2);
+  assert.equal(count(f, "formal-review"), 1);
+  assert.equal(pubs(f)[0]?.status, "published:99");
+  // the base moved during the review at the same head: re-review against the new base
+  const g = fake({ baseNow: [base, "d".repeat(40)] });
+  const lane2 = new Lane(cfg, g.io, TOKEN);
+  lane2.pass({ dryRun: false });
+  assert.equal(count(g, "formal-review"), 0);
+  assert.equal(lane2.attempted(7, head), false);
+  // a persistent failure is bounded: two runs, then no more
+  const h = fake({ baseNow: [base, "d".repeat(40), base, "d".repeat(40), base] });
+  const lane3 = new Lane(cfg, h.io, TOKEN);
+  for (let i = 0; i < 3; i++) lane3.pass({ dryRun: false });
+  assert.equal(count(h, "reviewer"), 2);
+  assert.equal(count(h, "formal-review"), 0);
+});
+
+test("AC10: a kill switch pulled during the pre-publication recheck stops publication without consuming the attempt", () => {
+  const f = fake({ haltAtPublish: true });
+  const lane = new Lane(cfg, f.io, TOKEN);
+  lane.pass({ dryRun: false });
+  assert.equal(count(f, "formal-review"), 0);
+  assert.deepEqual(pubs(f), []);
+  assert.deepEqual(attempts(f), []);
+  assert.ok(f.events.some((e) => e.includes("not published: kill switch set")));
 });

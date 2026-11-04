@@ -129,8 +129,9 @@ export class Lane {
   }
 
   /**
-   * A head is "attempted" once a reviewer produced a verdict for it, or after two attempts that
-   * produced none (Gibson docs/review-protocol.md: at most one retry after a terminal failure).
+   * A head is "attempted" once its verdict reached publication (or one already existed), or after
+   * two runs whose verdict never did — none returned, or the pre-publication recheck failed
+   * (Gibson docs/review-protocol.md: at most one retry after a terminal failure).
    */
   attempted(n: number, head: string): boolean {
     const marks = this.list<string>(this.attemptsFile);
@@ -188,6 +189,8 @@ export class Lane {
     const env = this.safeEnv();
     const started = this.io.now();
     let created = false;
+    let verdict = false; // the reviewer returned a verdict for this head
+    let settled = false; // the head's attempt is recorded, or deliberately left unconsumed
     let outcome = "unknown";
     this.io.mkdir(this.stateDir);
     try {
@@ -217,11 +220,16 @@ export class Lane {
       if (halted(this.cfg.root, this.io.env)) { outcome = "halted during the review: not published, attempt not consumed"; return; }
       // a reviewer that ran but returned no verdict allows one retry (review-protocol)
       if (event === undefined) { this.mark(`${v.number}@${reviewed.head}#no-verdict`); outcome = `no formal verdict (exit ${r.code})`; return; }
-      this.mark(`${v.number}@${reviewed.head}`);
-      outcome = this.publish(v.number, reviewed, event, out);
+      verdict = true;
+      const p = this.publish(v.number, reviewed, event, out, () => { this.mark(`${v.number}@${reviewed.head}`); settled = true; });
+      outcome = p.outcome;
+      if (p.halted) settled = true; // a kill switch costs nothing: the review is redone once it is released
     } catch (e) {
       outcome = `error: ${(e as Error).message}`;
     } finally {
+      // A verdict that never reached publication (a GitHub error or a moved base in the recheck)
+      // counts like a run with no verdict: one retry, so it is neither lost nor re-run forever.
+      if (verdict && !settled) this.mark(`${v.number}@${reviewed.head}#no-verdict`);
       if (created) this.io.run("git", ["-C", this.cfg.root, "worktree", "remove", "--force", wt], env);
       this.io.append(join(this.stateDir, "log.jsonl"), JSON.stringify({ at: this.io.now(), started, pr: v.number, head: reviewed.head,
         base: reviewed.base, author_vendor: d.author, reviewer_vendor: d.reviewer, reviewer_login: this.cfg.login, outcome }) + "\n");
@@ -229,17 +237,26 @@ export class Lane {
     }
   }
 
-  /** AC6/AC7: re-check, record, publish via formal-review.sh only, read back. Never publishes twice. */
-  private publish(n: number, reviewed: Range, event: "approve" | "request-changes", out: string): string {
-    if (this.token === undefined) return "not published: no reviewer token";
-    if (halted(this.cfg.root, this.io.env)) return "not published: kill switch set";
+  /**
+   * AC6/AC7: re-check, record, publish via formal-review.sh only, read back. Never publishes twice.
+   * `consume` records the head's attempt; it is called once the head is settled (published, or a
+   * verdict already exists). Any other return leaves it to the caller: one retry, or none for a halt.
+   */
+  private publish(n: number, reviewed: Range, event: "approve" | "request-changes", out: string, consume: () => void): { outcome: string; halted?: true } {
+    if (this.token === undefined) return { outcome: "not published: no reviewer token" };
     const now = this.range(this.view(n));
     if (now.head !== reviewed.head || now.base !== reviewed.base || now.target !== reviewed.target) {
-      return `not published: range moved during review (${reviewed.head.slice(0, 7)}..${reviewed.base.slice(0, 7)} → ${now.head.slice(0, 7)}..${now.base.slice(0, 7)})`;
+      return { outcome: `not published: range moved during review (${reviewed.head.slice(0, 7)}..${reviewed.base.slice(0, 7)} → ${now.head.slice(0, 7)}..${now.base.slice(0, 7)})` };
     }
-    if (reviewedAtHead(this.reviews(n), this.cfg.login, reviewed.head)) return "not published: a verdict already exists at this head";
+    const existing = reviewedAtHead(this.reviews(n), this.cfg.login, reviewed.head);
     const pubs = this.list<Publication>(this.publicationsFile);
-    if (pubs.some((p) => p.pr === n && p.head === reviewed.head)) return "not published: a publication is already recorded for this head";
+    if (existing || pubs.some((p) => p.pr === n && p.head === reviewed.head)) {
+      consume();
+      return { outcome: existing ? "not published: a verdict already exists at this head" : "not published: a publication is already recorded for this head" };
+    }
+    // the last kill-switch check, after the recheck reads and immediately before the irreversible step
+    if (halted(this.cfg.root, this.io.env)) return { outcome: "not published: kill switch set", halted: true };
+    consume();
     // The read-back window opens immediately before publishing, not when the attempt began, so an
     // unrelated review that appeared during the review cannot be taken for ours. GitHub's
     // submitted_at has whole-second precision: floor to the second and step back one, so our own
@@ -253,7 +270,7 @@ export class Lane {
     const back = verifyPublished(this.reviews(n), this.cfg.login, reviewed.head, event, record.since);
     record.status = back.ok ? `published:${back.id}` : `uncertain: ${back.reason}`;
     this.io.write(this.publicationsFile, JSON.stringify([...pubs, record], null, 2));
-    return back.ok ? `${event} (review ${back.id})` : record.status;
+    return { outcome: back.ok ? `${event} (review ${back.id})` : record.status };
   }
 }
 
