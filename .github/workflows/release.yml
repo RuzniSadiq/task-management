@@ -1,0 +1,153 @@
+# Release pipeline for the tag-pin delivery model (.gibson-delivery.json, Gibson docs/23).
+# A release is an exact v* tag. Nothing deploys on merge to main.
+#
+# FINOS controls evaluated here:
+#   SDLC-PREV-012 Deployment Gating (v0.2)    gate re-run + ancestry + version checks block the release
+#   SDLC-PREV-019 Version Release Approval    `release` environment: a named human approves before publish
+#   SDLC-PREV-003 Software Artifact Provenance signed attestation bound to the tarball digest
+#   SDLC-PREV-002 Content Addressable IDs     the approval and evidence name the artifact by sha256
+#   AIGF v3 MI-24 Human-in-the-Loop Gate      same approval, for the agent-built artefact
+# Independent verification: `gh attestation verify <tarball> --repo RuzniSadiq/task-management`
+# and the release-evidence.json attached to every release.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      digest: ${{ steps.pack.outputs.digest }}
+      tarball: ${{ steps.pack.outputs.tarball }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Release preconditions (ancestor of main, tag matches package.json)
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
+            { echo "::error::tagged commit $GITHUB_SHA is not on main; refusing to release"; exit 1; }
+          version=$(node -p "require('./package.json').version")
+          [ "$TAG" = "v$version" ] ||
+            { echo "::error::tag $TAG does not match package.json version $version"; exit 1; }
+      - run: npm ci --include=dev
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - name: Pack and fingerprint
+        id: pack
+        run: |
+          set -euo pipefail
+          tarball=$(npm pack --silent)
+          digest=$(sha256sum "$tarball" | cut -d' ' -f1)
+          mkdir -p out
+          mv "$tarball" out/
+          printf '%s  %s\n' "$digest" "$tarball" > out/SHA256SUMS
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release candidate ${GITHUB_REF_NAME}"
+            echo "- commit: \`${GITHUB_SHA}\`"
+            echo "- tarball: \`${tarball}\`"
+            echo "- sha256: \`${digest}\`"
+            echo "Approve the **release** environment only if this digest is the one you expect."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-candidate
+          path: out/
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Held by GitHub until the required reviewer approves. No signing or release happens before then.
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-candidate
+          path: out
+      - name: Verify the approved digest is the one being published
+        env:
+          EXPECTED: ${{ needs.build.outputs.digest }}
+          TARBALL: ${{ needs.build.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          actual=$(sha256sum "out/$TARBALL" | cut -d' ' -f1)
+          [ "$actual" = "$EXPECTED" ] ||
+            { echo "::error::digest mismatch: build said $EXPECTED, found $actual"; exit 1; }
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: out/${{ needs.build.outputs.tarball }}
+      - name: Write release evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+          TARBALL: ${{ needs.build.outputs.tarball }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          approvers=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/approvals" \
+            --jq '[.[] | {login: .user.login, state: .state, comment: .comment}]')
+          [ "$approvers" != "[]" ] || { echo "::error::no recorded approval for the release environment"; exit 1; }
+          APPROVERS="$approvers" node -e '
+            const e = process.env;
+            const rec = {
+              schema: "task-management.control-evidence/v1",
+              event: "release.published",
+              recorded_at: new Date().toISOString(),
+              artefact: { name: e.TARBALL, sha256: e.DIGEST, tag: e.TAG, commit: e.GITHUB_SHA },
+              run: { url: `${e.GITHUB_SERVER_URL}/${e.GITHUB_REPOSITORY}/actions/runs/${e.GITHUB_RUN_ID}`, attempt: e.GITHUB_RUN_ATTEMPT },
+              triggered_by: e.ACTOR,
+              approvals: JSON.parse(e.APPROVERS),
+              provenance: { type: "sigstore build-provenance attestation", verify: `gh attestation verify ${e.TARBALL} --repo ${e.GITHUB_REPOSITORY}` },
+              controls: [
+                { id: "SDLC-PREV-012", catalog: "FINOS SDLC Common Controls", version: "0.2", name: "Deployment Gating", result: "pass", checks: ["ancestor-of-main", "tag-matches-version", "typecheck", "lint", "test", "build"] },
+                { id: "SDLC-PREV-019", catalog: "FINOS SDLC Common Controls", name: "Version Release Approval Gating", result: "pass", evidence: "approvals" },
+                { id: "SDLC-PREV-003", catalog: "FINOS SDLC Common Controls", name: "Software Artifact Provenance", result: "pass", evidence: "provenance" },
+                { id: "SDLC-PREV-002", catalog: "FINOS SDLC Common Controls", name: "Content Addressable Identities", result: "pass", evidence: "artefact.sha256" },
+                { id: "MI-24", catalog: "FINOS AI Governance Framework", version: "v3", name: "Human-in-the-Loop Action Approval Gate", result: "pass", evidence: "approvals" }
+              ]
+            };
+            require("fs").writeFileSync("out/release-evidence.json", JSON.stringify(rec, null, 2) + "\n");
+          '
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          TARBALL: ${{ needs.build.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" "out/$TARBALL" out/SHA256SUMS out/release-evidence.json \
+            --verify-tag --title "$TAG" \
+            --notes "Built from \`${GITHUB_SHA}\` by run ${GITHUB_RUN_ID}. Verify: \`gh attestation verify ${TARBALL} --repo ${GITHUB_REPOSITORY}\`."
