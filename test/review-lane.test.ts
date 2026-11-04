@@ -14,7 +14,7 @@ const greenRuns = cfg.required.map((name, i) => ({ id: i + 1, name, status: "com
 
 interface Scenario {
   prs?: number[]; headNow?: string[]; wtHead?: string; wtBase?: string; fetchCode?: number; addCode?: number;
-  reviewerOut?: string; postReview?: boolean; commentDuringReview?: boolean; postSameSecond?: boolean; readBackFails?: number; failView?: number; envExtra?: NodeJS.ProcessEnv;
+  reviewerOut?: string; postReview?: boolean; commentDuringReview?: boolean; postSameSecond?: boolean; haltDuringReview?: boolean; haltDuringSetup?: boolean; readBackFails?: number; failView?: number; envExtra?: NodeJS.ProcessEnv;
 }
 
 /** A fake Io that records everything the runner does. */
@@ -54,12 +54,13 @@ function fake(sc: Scenario = {}) {
     run(cmd, args, env) {
       runs.push({ cmd, args, env });
       if (cmd === "git" && args.includes("fetch")) { events.push("fetch"); return { code: sc.fetchCode ?? 0, out: "", err: "fetch err" }; }
-      if (cmd === "git" && args.includes("add")) { events.push("worktree-add"); return { code: sc.addCode ?? 0, out: "", err: "add err" }; }
+      if (cmd === "git" && args.includes("add")) { events.push("worktree-add"); if (sc.haltDuringSetup === true) io.env.GIBSON_HALT = "1"; return { code: sc.addCode ?? 0, out: "", err: "add err" }; }
       if (cmd === "git" && args.includes("remove")) { events.push("worktree-remove"); return { code: 0, out: "", err: "" }; }
       if (cmd === "git" && args.includes("HEAD")) return { code: 0, out: `${sc.wtHead ?? head}\n`, err: "" };
       if (cmd === "git" && args.includes("origin/main")) return { code: 0, out: `${sc.wtBase ?? base}\n`, err: "" };
       if (cmd === "bash") {
         events.push("reviewer");
+        if (sc.haltDuringReview === true) io.env.GIBSON_HALT = "1"; // the owner pulls the kill switch mid-review
         // an unrelated same-identity review appearing while the review runs (before publication)
         if (sc.commentDuringReview === true) reviews.push({ id: 50, user: { login: cfg.login }, state: "COMMENTED", commit_id: head, submitted_at: new Date(clock).toISOString() });
         return { code: 0, out: "", err: sc.reviewerOut ?? "second-opinion.sh: slot:codex state:approve\n" }; }
@@ -273,4 +274,30 @@ test("AC6: the read-back window opens at publication, not at the start of the at
   const g = fake({ postSameSecond: true });
   new Lane(cfg, g.io, TOKEN).pass({ dryRun: false });
   assert.equal(pubs(g)[0]?.status, "published:99");
+});
+
+test("AC10: a kill switch pulled during the review stops publication, and the attempt is not consumed", () => {
+  const f = fake({ haltDuringReview: true });
+  const lane = new Lane(cfg, f.io, TOKEN);
+  lane.pass({ dryRun: false });
+  assert.equal(count(f, "reviewer"), 1);
+  assert.equal(count(f, "formal-review"), 0); // nothing published after the switch
+  assert.deepEqual(pubs(f), []);
+  assert.deepEqual(attempts(f), []); // so the review is redone once the switch is off
+  assert.ok(f.events.some((e) => e.includes("halted during the review")));
+  assert.equal(count(f, "worktree-remove"), 1); // and the worktree is still cleaned up
+  // once released, the same head is reviewed and published normally
+  delete f.io.env.GIBSON_HALT;
+  const g = fake();
+  new Lane(cfg, g.io, TOKEN).pass({ dryRun: false });
+  assert.equal(count(g, "formal-review"), 1);
+});
+
+test("AC10: a kill switch pulled during setup stops the reviewer from starting", () => {
+  const f = fake({ haltDuringSetup: true });
+  new Lane(cfg, f.io, TOKEN).pass({ dryRun: false });
+  assert.equal(count(f, "reviewer"), 0);
+  assert.deepEqual(attempts(f), []);
+  assert.ok(f.events.some((e) => e.includes("halted before the reviewer started")));
+  assert.equal(count(f, "worktree-remove"), 1);
 });

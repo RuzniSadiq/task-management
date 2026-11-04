@@ -172,7 +172,7 @@ export class Lane {
       const issue = this.json<{ title: string; body: string }>(["issue", "view", String(n), "--repo", this.cfg.repo, "--json", "title,body"]);
       parts.push("", `## Issue #${n}: ${issue.title} (acceptance criteria)`, issue.body);
     }
-    parts.push("", `BLOCKER RULE (The Gibson docs/review-protocol.md): ${GIBSON_BLOCKER_RULE} `
+    parts.push("", `BLOCKER RULE (quoted from The Gibson repository's docs/review-protocol.md, which is not part of this checkout): ${GIBSON_BLOCKER_RULE} `
       + "Request changes only for blockers. List notes under a separate Notes heading, and APPROVE when there are no blockers.");
     parts.push("", 'OUTPUT FORMAT: your first line must be plain text, exactly "1. VERDICT: APPROVE" or "1. VERDICT: REQUEST_CHANGES" — no bold, no other Markdown on that line.');
     const file = join(this.stateDir, `${key}.task.md`);
@@ -204,6 +204,8 @@ export class Lane {
         return;
       }
       const task = this.taskFile(v, key);
+      // the kill switch is re-checked immediately before each irreversible step (reviewer start, publication)
+      if (halted(this.cfg.root, this.io.env)) { outcome = "halted before the reviewer started; attempt not consumed"; return; }
       const out = join(this.stateDir, `${key}.md`);
       const r = this.io.run("bash", ["-c", 'source "$1/scripts/lib/wall-timeout.sh" && g="$1" && shift && run_with_wall_timeout 900 "$g/scripts/second-opinion.sh" "$@"', "_",
         this.cfg.gibson, "--repo", wt, "--reviewers", d.reviewer, "--author", d.author, "--base", reviewed.base, "--branch", "HEAD",
@@ -212,6 +214,7 @@ export class Lane {
       // lines are present). A launch failure (missing script, timeout helper, interpreter) consumes nothing.
       if (!/^second-opinion\.sh: /m.test(r.out + r.err)) { outcome = `reviewer did not start (exit ${r.code}): ${(r.err.trim().split("\n").pop() ?? "").slice(0, 200)}`; return; }
       const event = slotEvent(r.out + r.err);
+      if (halted(this.cfg.root, this.io.env)) { outcome = "halted during the review: not published, attempt not consumed"; return; }
       // a reviewer that ran but returned no verdict allows one retry (review-protocol)
       if (event === undefined) { this.mark(`${v.number}@${reviewed.head}#no-verdict`); outcome = `no formal verdict (exit ${r.code})`; return; }
       this.mark(`${v.number}@${reviewed.head}`);
@@ -229,6 +232,7 @@ export class Lane {
   /** AC6/AC7: re-check, record, publish via formal-review.sh only, read back. Never publishes twice. */
   private publish(n: number, reviewed: Range, event: "approve" | "request-changes", out: string): string {
     if (this.token === undefined) return "not published: no reviewer token";
+    if (halted(this.cfg.root, this.io.env)) return "not published: kill switch set";
     const now = this.range(this.view(n));
     if (now.head !== reviewed.head || now.base !== reviewed.base || now.target !== reviewed.target) {
       return `not published: range moved during review (${reviewed.head.slice(0, 7)}..${reviewed.base.slice(0, 7)} → ${now.head.slice(0, 7)}..${now.base.slice(0, 7)})`;
