@@ -44,7 +44,7 @@
 // Independence rule: an approval is "independent" only when both vendors are known (non-empty) and differ,
 // compared case-insensitively. Unknown vendor is reported as not independent, never assumed independent.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 export const SCHEMA = "task-management.control-evidence/v1";
@@ -115,12 +115,18 @@ function checksOf(v: unknown): Record<string, string> {
   return out;
 }
 
-function listFiles(dir: string): string[] {
+/** Recursively list evidence files. A dangling link, unreadable entry or symlink cycle is a warning, never an abort. */
+function listFiles(dir: string, root: string, warnings: string[], seen: Set<string> = new Set()): string[] {
+  const rel = (p: string): string => p.slice(root.length).replace(/^[/\\]+/, "") || ".";
+  const real = realpathSync(dir);
+  if (seen.has(real)) { warnings.push(`${rel(dir)}: directory already visited, symlink cycle or duplicate (skipped)`); return []; }
+  seen.add(real);
   const out: string[] = [];
   for (const name of readdirSync(dir).sort()) {
     const p = join(dir, name);
-    const st = statSync(p);
-    if (st.isDirectory()) out.push(...listFiles(p));
+    let st;
+    try { st = statSync(p); } catch { warnings.push(`${rel(p)}: unreadable or dangling link (skipped)`); continue; }
+    if (st.isDirectory()) out.push(...listFiles(p, root, warnings, seen));
     else if (st.isFile() && /\.jsonl?$/i.test(name)) out.push(p);
   }
   return out;
@@ -146,9 +152,10 @@ function toAudit(o: Json, source: string): AuditRecord | null {
 /** Read every evidence file under `dir`. Unparseable or unrecognised files become warnings, never throw. */
 export function loadEvidence(dir: string): Corpus {
   const corpus: Corpus = { audit: [], releases: [], verifications: [], warnings: [], files: [] };
-  for (const file of listFiles(dir)) {
+  for (const file of listFiles(dir, dir, corpus.warnings)) {
     const rel = file.slice(dir.length).replace(/^[/\\]+/, "");
-    const text = readFileSync(file, "utf8");
+    let text: string;
+    try { text = readFileSync(file, "utf8"); } catch { corpus.warnings.push(`${rel}: unreadable (skipped)`); continue; }
     if (/\.jsonl$/i.test(file)) {
       let used = 0;
       text.split(/\r?\n/).forEach((line, i) => {
@@ -220,7 +227,12 @@ export function answer(corpus: Corpus, query: string): Answer | { ambiguous: str
   for (const r of records) { linked.add(r.head_sha); if (r.merge_sha !== null) linked.add(r.merge_sha); }
   const releases = byTag.length > 0 ? byTag : corpus.releases.filter((r) => r.commit !== null && linked.has(r.commit));
   const rel = releases[0] ?? null;
-  const tag = rel?.tag ?? (corpus.verifications.some((v) => v.tag === query) ? query : null);
+  const warnings = [...corpus.warnings];
+  // Several release records for one tag are only harmless when they agree; otherwise say so rather than pick one silently.
+  if (rel !== null && releases.some((r) => r.artefact?.sha256 !== rel.artefact?.sha256 || r.commit !== rel.commit)) {
+    warnings.push(`conflicting release evidence for ${rel.tag ?? "this commit"}: ${releases.map((r) => `${r.source} (${r.artefact?.sha256 ?? "no digest"}, commit ${r.commit ?? "?"})`).join("; ")}; showing the first`);
+  }
+  const tag =rel?.tag ?? (corpus.verifications.some((v) => v.tag === query) ? query : null);
 
   const first = records[0] ?? null;
   const passed = new Set<string>();
@@ -261,7 +273,7 @@ export function answer(corpus: Corpus, query: string): Answer | { ambiguous: str
         ? null : latest.recorded_at >= rel.recorded_at,
       source: latest?.source ?? null,
     },
-    warnings: corpus.warnings,
+    warnings,
     evidence_files: corpus.files,
   };
 }
