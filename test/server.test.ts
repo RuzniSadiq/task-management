@@ -5,6 +5,7 @@ import { request as httpRequest } from "node:http";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   DEFAULT_HOST,
@@ -456,6 +457,159 @@ describe("AC6 persistence across server restart", () => {
       assert.deepEqual(await response.json(), created);
     } finally {
       await second.running.close();
+    }
+  });
+});
+
+// Test-engineer sensors: boundaries and adversarial inputs for AC2, AC4, AC5, AC6.
+describe("test-engineer: boundary and adversarial sensors", () => {
+  /** A valid create body padded with spaces to exactly `bytes` bytes. */
+  function paddedCreateBody(bytes: number): string {
+    const prefix = '{"title":"ok","status":"todo"}';
+    return prefix + " ".repeat(bytes - prefix.length);
+  }
+
+  test("AC4 413 for a body of exactly 64 KiB + 1 byte with Content-Length; nothing created", async () => {
+    await withServer(async (base) => {
+      const body = paddedCreateBody(MAX_BODY_BYTES + 1);
+      assert.equal(Buffer.byteLength(body), MAX_BODY_BYTES + 1);
+      await assertError(await postJson(base, "/tasks", body), 413);
+      assert.deepEqual(await (await fetch(`${base}/tasks`)).json(), []);
+    });
+  });
+
+  test("AC4 chunked body of exactly 64 KiB is read (not 413)", async () => {
+    await withServer(async (base) => {
+      const body = Buffer.from(paddedCreateBody(MAX_BODY_BYTES));
+      // Split so the size counter must sum across chunks.
+      const chunks = [body.subarray(0, 1000), body.subarray(1000, 40000), body.subarray(40000)];
+      const result = await rawRequest(base, {
+        method: "POST",
+        path: "/tasks",
+        headers: { "content-type": "application/json", "transfer-encoding": "chunked" },
+        chunks,
+      });
+      assert.equal(result.status, 201);
+      assert.equal((JSON.parse(result.body) as Task).title, "ok");
+    });
+  });
+
+  test("AC4 chunked body of exactly 64 KiB + 1 byte returns 413; nothing created", async () => {
+    await withServer(async (base) => {
+      const body = Buffer.from(paddedCreateBody(MAX_BODY_BYTES + 1));
+      const chunks = [body.subarray(0, MAX_BODY_BYTES), body.subarray(MAX_BODY_BYTES)];
+      const result = await rawRequest(base, {
+        method: "POST",
+        path: "/tasks",
+        headers: { "content-type": "application/json", "transfer-encoding": "chunked" },
+        chunks,
+      });
+      assert.equal(result.status, 413);
+      assert.match(String(result.headers["content-type"]), /^application\/json\b/);
+      assert.deepEqual(Object.keys(JSON.parse(result.body) as object), ["error"]);
+      assert.deepEqual(await (await fetch(`${base}/tasks`)).json(), []);
+    });
+  });
+
+  test("AC4 the 64 KiB limit counts bytes, not characters (multi-byte UTF-8)", async () => {
+    await withServer(async (base) => {
+      // 22,000 three-byte characters: well under 65,536 characters, over 65,536 bytes.
+      const body = JSON.stringify({ title: "€".repeat(22_000) });
+      assert.ok(body.length < MAX_BODY_BYTES);
+      assert.ok(Buffer.byteLength(body) > MAX_BODY_BYTES);
+      await assertError(await postJson(base, "/tasks", body), 413);
+      const chunked = await rawRequest(base, {
+        method: "POST",
+        path: "/tasks",
+        headers: { "content-type": "application/json", "transfer-encoding": "chunked" },
+        chunks: [Buffer.from(body)],
+      });
+      assert.equal(chunked.status, 413);
+      assert.deepEqual(await (await fetch(`${base}/tasks`)).json(), []);
+    });
+  });
+
+  for (const key of ["__proto__", "constructor", "prototype"]) {
+    test(`AC4 400 for a ${key} field on POST and PATCH; nothing changes`, async () => {
+      await withServer(async (base) => {
+        await assertError(await postJson(base, "/tasks", `{"title":"ok","${key}":{"status":"done"}}`), 400);
+        assert.deepEqual(await (await fetch(`${base}/tasks`)).json(), []);
+        const task = await createTask(base, { title: "t" });
+        await assertError(
+          await postJson(base, `/tasks/${task.id}/status`, `{"status":"done","${key}":{"title":"x"}}`, "PATCH"),
+          400,
+        );
+        assert.deepEqual(await (await fetch(`${base}/tasks`)).json(), [task]);
+      });
+    });
+  }
+
+  test("AC2/AC6 concurrent creates are all listed and all survive a restart", async () => {
+    const tasksFile = await freshTasksFile();
+    const first = await start(tasksFile);
+    let listed: Task[];
+    let created: Task[];
+    try {
+      const titles = Array.from({ length: 25 }, (_, i) => `task ${String(i)}`);
+      created = await Promise.all(titles.map((title) => createTask(first.base, { title })));
+      listed = (await (await fetch(`${first.base}/tasks`)).json()) as Task[];
+      assert.equal(listed.length, titles.length);
+      assert.deepEqual(
+        listed.map((task) => task.id).sort(),
+        created.map((task) => task.id).sort(),
+      );
+      // Creation order: createdAt never decreases along the list.
+      for (let i = 1; i < listed.length; i += 1) {
+        assert.ok((listed[i]?.createdAt ?? "") >= (listed[i - 1]?.createdAt ?? ""));
+      }
+    } finally {
+      await first.running.close();
+    }
+    const second = await start(tasksFile);
+    try {
+      assert.deepEqual(await (await fetch(`${second.base}/tasks`)).json(), listed);
+    } finally {
+      await second.running.close();
+    }
+  });
+
+  test("AC5 `node src/server.ts` with TASKS_FILE unset writes to data/tasks.json under the cwd", async () => {
+    const cwd = join(root, `cwd-${String((counter += 1))}`);
+    await mkdir(cwd, { recursive: true });
+    const serverPath = fileURLToPath(new URL("../src/server.ts", import.meta.url));
+    const env: NodeJS.ProcessEnv = { ...process.env, HOST: "127.0.0.1", PORT: "0" };
+    delete env.TASKS_FILE;
+    const child = spawn(process.execPath, [serverPath], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    try {
+      const line = await new Promise<string>((resolve, reject) => {
+        let out = "";
+        let err = "";
+        child.stdout.on("data", (chunk: Buffer) => {
+          out += chunk.toString("utf8");
+          if (out.includes("\n")) {
+            resolve(out);
+          }
+        });
+        child.stderr.on("data", (chunk: Buffer) => {
+          err += chunk.toString("utf8");
+        });
+        child.once("exit", (code) => {
+          reject(new Error(`server exited early with code ${String(code)}: ${err}`));
+        });
+      });
+      assert.match(line, /tasks file: data\/tasks\.json/);
+      const match = /listening on http:\/\/127\.0\.0\.1:(\d+)/.exec(line);
+      assert.ok(match, `listening line: ${line}`);
+      const task = await createTask(`http://127.0.0.1:${match[1] ?? ""}`, { title: "default file" });
+      const stored = JSON.parse(await readFile(join(cwd, "data", "tasks.json"), "utf8")) as { tasks: Task[] };
+      assert.deepEqual(stored.tasks, [task]);
+      const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+      child.kill("SIGTERM");
+      assert.equal(await exited, 0);
+    } finally {
+      if (child.exitCode === null) {
+        child.kill("SIGKILL");
+      }
     }
   });
 });
