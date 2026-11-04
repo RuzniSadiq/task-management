@@ -204,23 +204,127 @@ test("dedupe across runs: second failing run comments on the issue the first run
   assert.deepEqual(second.comments.map((c) => c.issue), [100]);
 });
 
-test("one finding per failing release; passing releases and drafts/no-tarball releases are skipped", () => {
+test("one finding per failing release; drafts and asset-less releases are skipped and recorded", () => {
   const f = fakeGh([
     release("v0.2.0", published(EVIL)),
     release("v0.1.0", published()),
     release("v0.3.0", published(EVIL), true),
-    release("v0.0.1", { "notes.txt": Buffer.from("x") }),
+    release("v0.0.1", {}),
   ]);
   const e = verifyAll(f.gh, opts);
   assert.deepEqual(e.releases.map((r) => [r.tag, r.result]), [["v0.2.0", "fail"], ["v0.1.0", "pass"]]);
+  assert.deepEqual(e.skipped, [{ tag: "v0.3.0", reason: "draft (not published)" }, { tag: "v0.0.1", reason: "serves no assets" }]);
   assert.deepEqual(f.created.map((c) => c.title), [findingTitle("v0.2.0")]);
   assert.equal(e.result, "fail");
 });
 
-test("no releases with a tarball is a pass with nothing to report", () => {
+test("no releases is a pass with nothing to report", () => {
   const e = verifyAll(fakeGh([]).gh, opts);
   assert.equal(e.result, "pass");
   assert.deepEqual(e.releases, []);
+  assert.deepEqual(e.skipped, []);
+});
+
+// ---- Review round 1 (B1): assets that are not .tgz cannot evade the control ---------------------
+
+test("B1: an extra .tar.gz uploaded next to the approved tarball fails the release and is hashed", () => {
+  const f = fakeGh([release("v0.1.0", { ...published(), "task-management-0.1.0.tar.gz": EVIL })]);
+  const e = verifyAll(f.gh, opts);
+  assert.equal(e.result, "fail");
+  const r = e.releases[0];
+  assert.ok(r);
+  assert.equal(r.artefacts.find((a) => a.name === TARBALL)?.result, "pass");
+  const extra = r.artefacts.find((a) => a.name === "task-management-0.1.0.tar.gz");
+  assert.equal(extra?.result, "fail");
+  assert.equal(extra.observed_sha256, sha256(EVIL));
+  assert.ok(extra.reasons.some((x) => x.startsWith("unexpected asset: task-management-0.1.0.tar.gz")));
+  assert.equal(control(e, "SDLC-PREV-002"), "fail");
+  assert.deepEqual(f.created.map((c) => c.title), [findingTitle("v0.1.0")]);
+});
+
+test("B1: tarball deleted and a .zip uploaded instead: the release is still verified and fails", () => {
+  const files: Files = { ...published(), "task-management-0.1.0.zip": EVIL };
+  delete files[TARBALL];
+  const f = fakeGh([release("v0.1.0", files)]);
+  const e = verifyAll(f.gh, opts);
+  assert.equal(e.result, "fail");
+  assert.deepEqual(e.skipped, []);
+  const { r, a } = only(e);
+  assert.equal(r.result, "fail");
+  assert.ok(r.reasons.includes(`released artefact ${TARBALL} named in ${EVIDENCE_ASSET} is missing from the release`));
+  assert.equal(a.name, "task-management-0.1.0.zip");
+  assert.equal(a.observed_sha256, sha256(EVIL));
+  assert.ok(a.reasons.some((x) => x.startsWith("unexpected asset:")));
+  assert.equal(f.created.length, 1);
+});
+
+test("B1: a release left with only SHA256SUMS and release-evidence.json fails", () => {
+  const files = published();
+  delete files[TARBALL];
+  const e = verifyAll(fakeGh([release("v0.1.0", files)]).gh, opts);
+  assert.equal(e.result, "fail");
+  const r = e.releases[0];
+  assert.ok(r);
+  assert.deepEqual(r.artefacts, []);
+  assert.ok(r.reasons.includes("release serves no artefact besides its records"));
+  assert.ok(r.reasons.includes(`released artefact ${TARBALL} named in ${EVIDENCE_ASSET} is missing from the release`));
+  assert.equal(control(e, "SDLC-PREV-002"), "fail");
+});
+
+test("B1: a release with no release.yml records at all is verified and fails, not skipped", () => {
+  const e = verifyAll(fakeGh([release("v0.0.1", { "notes.txt": Buffer.from("x") })]).gh, opts);
+  assert.equal(e.result, "fail");
+  assert.deepEqual(e.skipped, []);
+  assert.deepEqual(only(e).r.reasons, [`release has no ${SUMS_ASSET} asset`, `release has no ${EVIDENCE_ASSET} asset`]);
+});
+
+// ---- Review round 1 (B2): a failure writing the finding never loses the verification results ----
+
+test("B2: createIssue throwing still returns the failed release, its digests and an error finding", () => {
+  const f = fakeGh([release("v0.2.0", published(EVIL)), release("v0.1.0", published(EVIL))]);
+  let calls = 0;
+  const gh = { ...f.gh };
+  f.gh.createIssue = (title, body) => { if (calls++ === 0) throw new Error("gh issue create failed (1): HTTP 502\nmore"); return gh.createIssue(title, body); };
+  const e = verifyAll(f.gh, opts);
+  assert.equal(e.result, "fail");
+  assert.deepEqual(e.releases.map((r) => r.result), ["fail", "fail"]);
+  assert.equal(e.releases[0]?.artefacts[0]?.observed_sha256, sha256(EVIL));
+  assert.deepEqual(e.findings, [
+    { tag: "v0.2.0", issue: null, action: "error", error: "could not open the finding: gh issue create failed (1): HTTP 502" },
+    { tag: "v0.1.0", issue: 100, action: "opened" },
+  ]);
+  assert.equal(control(e, "OP-007"), "fail");
+});
+
+test("B2: comment throwing on an existing finding is recorded, not thrown", () => {
+  const f = fakeGh([release("v0.1.0", published(EVIL))], { open: [{ number: 41, title: findingTitle("v0.1.0") }] });
+  f.gh.comment = () => { throw new Error("HTTP 403: rate limit"); };
+  const e = verifyAll(f.gh, opts);
+  assert.deepEqual(e.findings, [{ tag: "v0.1.0", issue: null, action: "error", error: "could not comment on the finding: HTTP 403: rate limit" }]);
+  assert.equal(e.result, "fail");
+});
+
+test("B2: ensureLabel or openFindings throwing records an error finding for every failed release", () => {
+  for (const which of ["ensureLabel", "openFindings"] as const) {
+    const f = fakeGh([release("v0.2.0", published(EVIL)), release("v0.1.0", published(EVIL))]);
+    f.gh[which] = () => { throw new Error("issues are disabled"); };
+    const e = verifyAll(f.gh, opts);
+    assert.equal(e.result, "fail", which);
+    assert.equal(e.releases.length, 2, which);
+    assert.deepEqual(e.findings.map((x) => [x.tag, x.action, x.issue]), [["v0.2.0", "error", null], ["v0.1.0", "error", null]], which);
+    assert.equal(f.created.length, 0, which);
+  }
+});
+
+test("B2: releases() throwing returns a fail evidence record with the reason and every control failed", () => {
+  const f = fakeGh([]);
+  f.gh.releases = () => { throw new Error("gh api --paginate repos/o/r/releases failed (1): HTTP 503"); };
+  const e = verifyAll(f.gh, opts);
+  assert.equal(e.result, "fail");
+  assert.equal(e.error, "could not list releases: gh api --paginate repos/o/r/releases failed (1): HTTP 503");
+  assert.deepEqual(e.releases, []);
+  assert.deepEqual(e.findings, []);
+  assert.deepEqual(e.controls.map((c) => c.result), ["fail", "fail", "fail"]);
 });
 
 test("parseSums reads sha256sum text and binary-mode lines and ignores junk", () => {
@@ -371,6 +475,7 @@ function main() {
   if (a[0] === "issue" && a[1] === "list") { log(null); process.stdout.write(JSON.stringify(st.open)); return 0; }
   if (a[0] === "issue" && (a[1] === "create" || a[1] === "comment")) {
     log(fs.readFileSync(0, "utf8"));
+    if (st.failIssueWrites) { process.stderr.write("HTTP 502: Bad Gateway\\n"); return 1; }
     if (a[1] === "create") process.stdout.write("https://github.com/o/r/issues/321\\n");
     return 0;
   }
@@ -381,7 +486,7 @@ function main() {
 process.exitCode = main();
 `;
 
-interface CliState { failReleases?: boolean; served?: Buffer; attested?: string[]; open?: Issue[] }
+interface CliState { failReleases?: boolean; failIssueWrites?: boolean; served?: Buffer; attested?: string[]; open?: Issue[] }
 interface GhCall { args: string[]; stdin: string | null }
 
 function runCli(s: CliState, extra: string[] = []) {
@@ -392,6 +497,7 @@ function runCli(s: CliState, extra: string[] = []) {
     for (const [id, b] of rel.bytes) assets[String(id)] = b.toString("base64");
     writeFileSync(join(dir, "state.json"), JSON.stringify({
       failReleases: s.failReleases ?? false,
+      failIssueWrites: s.failIssueWrites ?? false,
       releases: [rel.info],
       assets,
       attested: s.attested ?? [sha256(GOOD)],
@@ -481,4 +587,33 @@ test("CLI cannot list releases: fails closed with a non-zero exit", () => {
   const r = runCli({ failReleases: true });
   assert.notEqual(r.status, 0);
   assert.deepEqual(writes(r.calls), []);
+  // B2: the evidence file is still written, naming the failure.
+  assert.equal(r.status, 1);
+  assert.equal(r.evidence?.result, "fail");
+  assert.match(r.evidence.error ?? "", /^could not list releases: .*HTTP 503/);
+  assert.deepEqual(r.evidence.releases, []);
+  assert.match(r.stdout, /ERROR could not list releases/);
+});
+
+test("B2 CLI: tampered asset and the finding cannot be filed: exit 1, evidence and log keep the digests", () => {
+  const r = runCli({ served: EVIL, failIssueWrites: true });
+  assert.equal(r.status, 1, r.stderr);
+  assert.ok(r.evidence);
+  assert.equal(r.evidence.result, "fail");
+  const a = r.evidence.releases[0]?.artefacts[0];
+  assert.equal(a?.observed_sha256, sha256(EVIL));
+  assert.equal(a.expected_sha256.sha256sums, sha256(GOOD));
+  assert.equal(r.evidence.findings.length, 1);
+  const f = r.evidence.findings[0];
+  assert.equal(f?.action, "error");
+  assert.match(f.action === "error" ? f.error : "", /^could not open the finding: .*HTTP 502/);
+  assert.match(r.stdout, /FAIL v0\.1\.0/);
+  assert.ok(r.stdout.includes(sha256(EVIL)), "observed digest is in the log");
+  assert.match(r.stdout, /finding error \(v0\.1\.0\)/);
+});
+
+test("N1 CLI --dry-run never comments, even when an open finding would match", () => {
+  const r = runCli({ served: EVIL, open: [{ number: 77, title: findingTitle("v0.1.0") }] }, ["--dry-run"]);
+  assert.equal(r.calls.filter((c) => c.args[0] === "issue" && c.args[1] === "comment").length, 0);
+  assert.equal(r.calls.filter((c) => c.args[0] === "issue" && c.args[1] === "list").length, 0);
 });

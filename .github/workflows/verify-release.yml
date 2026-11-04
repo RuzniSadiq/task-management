@@ -7,6 +7,9 @@
 #   OP-007        Monitoring                    scheduled run; a failure opens/comments a control-finding issue
 # Evidence: verify-release-evidence.json (task-management.control-evidence/v1, event release.verified),
 # uploaded as the run's verify-release-evidence artifact.
+#
+# Detection latency: replacing an asset (`gh release upload --clobber`, `delete-asset`) does not
+# reliably emit a `release` event, so the daily schedule is the backstop: worst case about 24h.
 name: verify-release
 
 on:

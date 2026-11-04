@@ -6,8 +6,12 @@
 //   1. each tarball's sha256, recomputed from the downloaded bytes, equals its SHA256SUMS line
 //   2. it also equals artefact.sha256 in the release's release-evidence.json
 //   3. `gh attestation verify <tarball> --repo <repo>` succeeds (sigstore build provenance)
+// Every published release with any asset is checked. A release may serve exactly three assets: the
+// tarball named in its release-evidence.json, SHA256SUMS and release-evidence.json. Any other asset
+// (a second tarball, a .tar.gz, a .zip) is hashed, recorded and fails the release.
 // Any failure exits non-zero and opens one `control-finding` issue per release, or comments on the
-// one already open for that release, so repeat runs never duplicate it.
+// one already open for that release, so repeat runs never duplicate it. The evidence file is always
+// written: a failure to list releases or to write a finding is recorded in it, never thrown away.
 //
 // FINOS controls evaluated here:
 //   SDLC-PREV-003 Software Artifact Provenance   attestation still verifies for the served bytes
@@ -62,6 +66,10 @@ export interface ReleaseResult { tag: string; url: string; result: Result; artef
 
 export interface Run { url: string; attempt: string }
 
+export type Finding =
+  | { tag: string; issue: number; action: "opened" | "commented" }
+  | { tag: string; issue: null; action: "error"; error: string };
+
 export interface Evidence {
   schema: typeof SCHEMA;
   event: "release.verified";
@@ -69,14 +77,19 @@ export interface Evidence {
   repository: string;
   run: Run;
   result: Result;
+  /** Set when the run could not list releases; `releases` is then empty and the result is fail. */
+  error?: string;
   releases: ReleaseResult[];
-  findings: { tag: string; issue: number; action: "opened" | "commented" }[];
+  /** Releases not verified, and why (drafts; releases that serve no asset). */
+  skipped: { tag: string; reason: string }[];
+  findings: Finding[];
   controls: { id: string; catalog?: string; version?: string; name: string; result: Result; evidence: string }[];
 }
 
 export const sha256 = (bytes: Buffer): string => createHash("sha256").update(bytes).digest("hex");
 
-const isTarball = (name: string): boolean => name.endsWith(".tgz");
+/** The two records release.yml publishes next to the artefact; every other asset is an artefact. */
+const isRecord = (name: string): boolean => name === SUMS_ASSET || name === EVIDENCE_ASSET;
 const HEX64 = /^[0-9a-f]{64}$/;
 
 /** Parse `sha256sum` output: `<hex>  <name>` (or `<hex> *<name>`). Malformed lines are ignored. */
@@ -118,19 +131,21 @@ export function verifyRelease(gh: Gh, rel: ReleaseInfo): ReleaseResult {
   const evidence = "text" in evFile ? parseEvidence(evFile.text) : evFile.error;
   if (typeof evidence === "string") reasons.push(evidence);
 
-  const tarballs = rel.assets.filter((a) => isTarball(a.name));
-  if (typeof evidence !== "string" && !tarballs.some((a) => a.name === evidence.name)) {
+  // Every non-record asset is served to users, so every one is hashed and checked, whatever its name.
+  const served = rel.assets.filter((a) => !isRecord(a.name));
+  if (served.length === 0) reasons.push("release serves no artefact besides its records");
+  if (typeof evidence !== "string" && !served.some((a) => a.name === evidence.name)) {
     reasons.push(`released artefact ${evidence.name} named in ${EVIDENCE_ASSET} is missing from the release`);
   }
 
-  const artefacts = tarballs.map((asset): ArtefactResult => {
+  const artefacts = served.map((asset): ArtefactResult => {
     const why: string[] = [];
     const fromSums = sums?.get(asset.name) ?? null;
     if (sums !== undefined && fromSums === null) why.push(`${SUMS_ASSET} has no line for ${asset.name}`);
     let fromEvidence: string | null = null;
     if (typeof evidence !== "string") {
       if (evidence.name === asset.name) fromEvidence = evidence.sha256;
-      else why.push(`${asset.name} is not the artefact recorded in ${EVIDENCE_ASSET} (${evidence.name})`);
+      else why.push(`unexpected asset: ${asset.name} is not the artefact recorded in ${EVIDENCE_ASSET} (${evidence.name})`);
     }
     let bytes: Buffer | undefined;
     try { bytes = gh.download(asset); } catch (e) { why.push(`could not download ${asset.name}: ${errText(e)}`); }
@@ -181,37 +196,62 @@ export function findingBody(r: ReleaseResult, run: Run): string {
 
 export interface Options { repo: string; run: Run; now: () => string }
 
-/** One verification pass over every published release with a tarball. Returns the evidence record. */
-export function verifyAll(gh: Gh, opts: Options): Evidence {
-  const releases = gh.releases().filter((r) => !r.draft && r.assets.some((a) => isTarball(a.name)));
-  const results = releases.map((r) => verifyRelease(gh, r));
-  const failed = results.filter((r) => r.result === "fail");
-
-  const findings: Evidence["findings"] = [];
-  if (failed.length > 0) {
+/**
+ * Open or comment on one finding per failed release. Never throws: a GitHub failure (5xx, rate
+ * limit, issues disabled) is recorded as an `error` finding so the verification results survive.
+ */
+function writeFindings(gh: Gh, failed: ReleaseResult[], run: Run): Finding[] {
+  let open: Issue[];
+  try {
     gh.ensureLabel();
-    const open = gh.openFindings();
-    for (const r of failed) {
-      const title = findingTitle(r.tag);
-      const body = findingBody(r, opts.run);
-      const existing = open.find((i) => i.title === title);
+    open = gh.openFindings();
+  } catch (e) {
+    const error = `could not read open findings: ${errText(e)}`;
+    return failed.map((r) => ({ tag: r.tag, issue: null, action: "error", error }));
+  }
+  return failed.map((r): Finding => {
+    const title = findingTitle(r.tag);
+    const body = findingBody(r, run);
+    const existing = open.find((i) => i.title === title);
+    try {
       if (existing !== undefined) {
         gh.comment(existing.number, body);
-        findings.push({ tag: r.tag, issue: existing.number, action: "commented" });
-      } else {
-        const number = gh.createIssue(title, body);
-        open.push({ number, title });
-        findings.push({ tag: r.tag, issue: number, action: "opened" });
+        return { tag: r.tag, issue: existing.number, action: "commented" };
       }
+      const number = gh.createIssue(title, body);
+      open.push({ number, title });
+      return { tag: r.tag, issue: number, action: "opened" };
+    } catch (e) {
+      return { tag: r.tag, issue: null, action: "error", error: `could not ${existing === undefined ? "open" : "comment on"} the finding: ${errText(e)}` };
     }
-  }
+  });
+}
+
+/** One verification pass over every published release. Never throws; returns the evidence record. */
+export function verifyAll(gh: Gh, opts: Options): Evidence {
+  let listed: ReleaseInfo[] | undefined;
+  let error: string | undefined;
+  try { listed = gh.releases(); } catch (e) { error = `could not list releases: ${errText(e)}`; }
+
+  const skipped: Evidence["skipped"] = [];
+  const toVerify = (listed ?? []).filter((r) => {
+    if (r.draft) skipped.push({ tag: r.tag, reason: "draft (not published)" });
+    else if (r.assets.length === 0) skipped.push({ tag: r.tag, reason: "serves no assets" });
+    else return true;
+    return false;
+  });
+  // Verify everything first; writing findings comes after, so its failures cannot lose these results.
+  const results = toVerify.map((r) => verifyRelease(gh, r));
+  const failed = results.filter((r) => r.result === "fail");
+  const findings = failed.length > 0 ? writeFindings(gh, failed, opts.run) : [];
 
   const all = results.flatMap((r) => r.artefacts);
-  const provenance: Result = all.every((a) => a.attestation === "pass") ? "pass" : "fail";
-  const digests: Result = results.every((r) => r.reasons.length === 0)
+  const ok = error === undefined;
+  const provenance: Result = ok && all.every((a) => a.attestation === "pass") ? "pass" : "fail";
+  const digests: Result = ok && results.every((r) => r.reasons.length === 0)
     && all.every((a) => a.observed_sha256 !== null && a.observed_sha256 === a.expected_sha256.sha256sums && a.observed_sha256 === a.expected_sha256.release_evidence)
     ? "pass" : "fail";
-  const result: Result = failed.length === 0 ? "pass" : "fail";
+  const result: Result = ok && failed.length === 0 ? "pass" : "fail";
   return {
     schema: SCHEMA,
     event: "release.verified",
@@ -219,7 +259,9 @@ export function verifyAll(gh: Gh, opts: Options): Evidence {
     repository: opts.repo,
     run: opts.run,
     result,
+    ...(error === undefined ? {} : { error }),
     releases: results,
+    skipped,
     findings,
     controls: [
       { id: "SDLC-PREV-003", catalog: "FINOS SDLC Common Controls", name: "Software Artifact Provenance", result: provenance, evidence: "releases[].artefacts[].attestation" },
@@ -282,14 +324,20 @@ function main(argv: string[]): number {
     gh.ensureLabel = () => undefined;
     gh.openFindings = () => [];
     gh.createIssue = (title) => { console.log(`[dry-run] would open or comment: ${title}`); return 0; };
+    gh.comment = (issue) => { console.log(`[dry-run] would comment on #${issue}`); };
   }
   const evidence = verifyAll(gh, { repo, run, now: () => new Date().toISOString() });
   writeFileSync(out, JSON.stringify(evidence, null, 2) + "\n");
+  if (evidence.error !== undefined) console.log(`ERROR ${evidence.error}`);
   for (const r of evidence.releases) {
     console.log(`${r.result.toUpperCase()} ${r.tag}`);
     for (const x of [...r.reasons, ...r.artefacts.flatMap((a) => a.reasons.map((y) => `${a.name}: ${y}`))]) console.log(`  - ${x}`);
+    for (const a of r.artefacts) console.log(`  ${a.name} sha256 ${a.observed_sha256 ?? "not downloaded"}`);
   }
-  for (const f of evidence.findings) console.log(`finding ${f.action}: #${f.issue} (${f.tag})`);
+  for (const s of evidence.skipped) console.log(`SKIP ${s.tag}: ${s.reason}`);
+  for (const f of evidence.findings) {
+    console.log(f.action === "error" ? `finding error (${f.tag}): ${f.error}` : `finding ${f.action}: #${f.issue} (${f.tag})`);
+  }
   console.log(`verify-release: ${evidence.result} (${evidence.releases.length} release(s)); evidence in ${out}`);
   return evidence.result === "pass" ? 0 : 1;
 }
