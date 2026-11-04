@@ -40,28 +40,53 @@ token for the agents they run (rules in `AGENTS.md` → "Agent credentials").
 
        security add-generic-password -a "$USER" -s gibson-agent-token -w
 
-3. **Builder shell** (one terminal, used only for the agent). Give the agent a fresh
-   worktree from an up-to-date `main`, set the restricted token, check it is the
-   active GitHub credential, and launch The Gibson loop:
+3. **Builder shell** (one terminal, used only for the agent). The Gibson loop runs in a
+   dedicated loop folder (a detached worktree of `main`; the loop writes its state there,
+   never into your checkout), with the restricted token as the active GitHub credential:
 
-       git fetch origin
-       WT=../wt-<issue>-<slug>
-       git worktree add "$WT" -b feat/<issue>-<slug> origin/main
+       git worktree add --detach ../task-management-loop origin/main
        export GH_TOKEN="$(security find-generic-password -s gibson-agent-token -w)"
        gh auth status                      # must show "… (GH_TOKEN)" as the active source
        env | grep -c GH_REVIEWER_TOKEN     # must print 0: the reviewer token is not here
-       ~/Code/the-gibson/scripts/loop.sh --runner claude \
-         --repo "$WT" --repo-slug RuzniSadiq/task-management
+       GIBSON_AGENT_VENDOR=claude ~/Code/the-gibson/scripts/loop.sh --runner claude \
+         --repo ../task-management-loop --repo-slug RuzniSadiq/task-management
 
-4. **Reviewer shell** (a separate terminal). Only this shell reads the reviewer token,
-   and only for the review command (The Gibson's `second-opinion.sh`, which runs Codex
-   read-only and posts the verdict as `ruzni-reviewer`):
+   The Claude runner starts in `acceptEdits` mode, which approves file edits only. Rather
+   than `bypassPermissions` (which would also let an agent call `/usr/bin/git` and skip
+   the Gibson's git guard), give the loop folder a narrow local allow-list in
+   `../task-management-loop/.claude/settings.local.json` (machine-specific, never committed;
+   replace `<home>` with your home directory):
 
-       T="$(security find-generic-password -s gibson-reviewer-token -w)" && [ -n "$T" ] && \
-       GIBSON_FORMAL_REVIEW=1 GH_REVIEWER_TOKEN="$T" ~/Code/the-gibson/scripts/second-opinion.sh \
-         --repo <review-worktree-at-PR-head> --reviewers codex --author claude \
-         --base origin/main --branch HEAD \
-         --pr <N> --github-repo RuzniSadiq/task-management; unset T
+       {
+         "permissions": {
+           "allow": [
+             "Bash(gh *)", "Bash(git *)", "Bash(npm *)", "Bash(node *)",
+             "Bash(<home>/Code/the-gibson/scripts/*)",
+             "Read(/<home>/Code/the-gibson/**)",
+             "Read(/<home>/Code/wt-*/**)", "Edit(/<home>/Code/wt-*/**)"
+           ],
+           "additionalDirectories": ["<home>/Code/the-gibson"]
+         }
+       }
+
+   This is a convenience for the runner, not a security control: the controls are the
+   restricted token, branch protection and the independent review.
+
+4. **Reviewer shell** (a separate terminal, left running). The review lane is the only
+   process that reads the reviewer token. Every 60 seconds it looks for open PRs whose
+   required checks are green and that have no verdict at their current head, then runs
+   The Gibson's `second-opinion.sh` (Codex, read-only, for a Claude-authored PR) and posts
+   the verdict as `ruzni-reviewer`, pinned to that commit. It never merges or edits code:
+
+       cd <a checkout of this repo used only for reviewing>
+       node scripts/review-lane.ts              # watch mode
+       node scripts/review-lane.ts --dry-run    # show decisions, post nothing
+       node scripts/review-lane.ts --pr <N>     # one PR, once
+
+   It reads the token from the Keychain (`gibson-reviewer-token`) and stops on the Gibson
+   kill switch (`gibson/HALT` or `GIBSON_HALT=1`). It reviews a PR only when its commits
+   carry exactly one `Agent-Vendor` trailer, and always picks a reviewer of a different
+   vendor (Gibson Law 5).
 
 ### What the restricted token does and does not cover
 
