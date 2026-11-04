@@ -4,6 +4,9 @@ node_modules/
 # Gibson local state (regenerated with gate-baseline.sh)
 .gibson-baseline.json
 
+# Local task data (the JSON task store)
+data/
+
 # Local SQLite databases (app data and test data)
 *.db
 *.db-journal
