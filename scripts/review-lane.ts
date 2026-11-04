@@ -2,10 +2,12 @@
 //
 // Modelled on The Gibson's D-018 reviewer controller (the-gibson memory/DECISIONS.md):
 // poll open PRs; the first time a head is green, unreviewed and not past its round cap,
-// review it. Every review action is The Gibson's own `scripts/second-opinion.sh`
-// (cross-vendor, read-only) with GIBSON_FORMAL_REVIEW=1, which publishes the verdict
-// through `scripts/formal-review.sh` as the reviewer identity. This lane never merges,
-// edits code or decides a verdict itself.
+// review it. The review is The Gibson's own `scripts/second-opinion.sh` (cross-vendor,
+// read-only), run WITHOUT the reviewer token, so the reviewing AI cannot read it. Its
+// slot verdicts are then published by The Gibson's `scripts/formal-review.sh` as the
+// reviewer identity, pinned to the head, using the same slot-authority rule as
+// second-opinion.sh's own formal path (#290). This lane never merges, edits code or
+// decides a verdict itself.
 //
 // Run it in a reviewer-only terminal (the reviewer token must never reach a builder):
 //   node scripts/review-lane.ts            watch every 60s
@@ -112,11 +114,30 @@ function run(cmd: string, args: string[], env: NodeJS.ProcessEnv = process.env):
   return { code: r.status ?? 1, out: r.stdout, err: r.stderr };
 }
 
-/** Environment for every gh read: the reviewer token is removed, so reads use the operator's own login. */
+/** Environment for every gh read AND for the reviewing AI: no reviewer token in any form. */
 export function readEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const copy = { ...env };
   delete copy.GH_REVIEWER_TOKEN;
+  delete copy.GIBSON_REVIEWER_TOKEN;
+  delete copy.GIBSON_FORMAL_REVIEW; // second-opinion.sh must not publish; the lane publishes after
   return copy;
+}
+
+/** Environment for formal-review.sh only: the one process that holds the reviewer token. */
+export function publisherEnv(env: NodeJS.ProcessEnv, token: string): NodeJS.ProcessEnv {
+  return { ...readEnv(env), GH_REVIEWER_TOKEN: token };
+}
+
+/**
+ * The Gibson's slot-authority rule (second-opinion.sh #290), applied to its
+ * "slot:<name> state:<state>" lines: any request-changes → request-changes; every slot
+ * approve → approve; anything else (no slots, no-verdict, error) → no formal review.
+ */
+export function slotEvent(output: string): "approve" | "request-changes" | undefined {
+  const states = [...output.matchAll(/slot:\S+ state:(\S+)/g)].map((m) => m[1]);
+  if (states.includes("request-changes")) return "request-changes";
+  if (states.length > 0 && states.every((st) => st === "approve")) return "approve";
+  return undefined;
 }
 
 function gh(args: string[]): string {
@@ -127,6 +148,11 @@ function gh(args: string[]): string {
 
 function ghJson<T>(args: string[]): T {
   return JSON.parse(gh(args)) as T;
+}
+
+/** Every page of a GitHub REST list (gh --paginate --slurp returns an array of pages). */
+function ghPages<T>(path: string): T[] {
+  return ghJson<T[]>(["api", "--paginate", "--slurp", path]);
 }
 
 function log(message: string): void {
@@ -162,9 +188,9 @@ interface GhPr { number: number; state: string; isDraft: boolean; baseRefName: s
   labels: { name: string }[]; closingIssuesReferences: { number: number }[] }
 
 function prFacts(cfg: Config, pr: GhPr): PrFacts {
-  const runs = ghJson<{ check_runs: CheckRun[] }>(["api", `repos/${cfg.repo}/commits/${pr.headRefOid}/check-runs?per_page=100`]).check_runs;
-  const reviews = ghJson<Review[]>(["api", `repos/${cfg.repo}/pulls/${pr.number}/reviews?per_page=100`]);
-  const commits = ghJson<{ commit: { message: string } }[]>(["api", `repos/${cfg.repo}/pulls/${pr.number}/commits?per_page=100`]);
+  const runs = ghPages<{ check_runs: CheckRun[] }>(`repos/${cfg.repo}/commits/${pr.headRefOid}/check-runs?per_page=100`).flatMap((p) => p.check_runs);
+  const reviews = ghPages<Review[]>(`repos/${cfg.repo}/pulls/${pr.number}/reviews?per_page=100`).flat();
+  const commits = ghPages<{ commit: { message: string } }[]>(`repos/${cfg.repo}/pulls/${pr.number}/commits?per_page=100`).flat();
   return { state: pr.state, isDraft: pr.isDraft, baseRefName: pr.baseRefName, head: pr.headRefOid, labels: pr.labels.map((l) => l.name),
     runs, reviews, commitMessages: commits.map((c) => c.commit.message) };
 }
@@ -208,14 +234,22 @@ function review(cfg: Config, pr: GhPr, d: Extract<Decision, { action: "review" }
       cfg.gibson, "--repo", wt, "--reviewers", d.reviewer, "--author", d.author, "--base", "origin/main", "--branch", "HEAD",
       "--gate-status", `required checks green at ${head}`, "--task-file", writeTask(cfg, pr, key),
       "--pr", String(pr.number), "--github-repo", cfg.repo, "--out", out];
-    const r = run("bash", args, { ...process.env, GIBSON_FORMAL_REVIEW: "1", GH_REVIEWER_TOKEN: token });
-    slot = /slot:\S+ state:(\S+)/.exec(r.out + r.err)?.[1] ?? `no slot state (exit ${r.code})`;
+    const r = run("bash", args, readEnv(process.env)); // the reviewing AI never sees the token
+    const event = slotEvent(r.out + r.err);
+    slot = event ?? `no formal verdict (exit ${r.code})`;
+    const now = gh(["pr", "view", String(pr.number), "--repo", cfg.repo, "--json", "headRefOid", "-q", ".headRefOid"]).trim();
+    if (event !== undefined && now !== head) slot = `not published: head moved to ${now.slice(0, 7)} during review`;
+    else if (event !== undefined) {
+      const pub = run(join(cfg.gibson, "scripts", "formal-review.sh"), ["--pr", String(pr.number), "--repo", cfg.repo,
+        "--event", event, "--body-file", out, "--commit", head], publisherEnv(process.env, token));
+      if (pub.code !== 0) slot = `formal-review.sh failed (exit ${pub.code}): ${pub.err.trim().split("\n").pop() ?? ""}`;
+    }
   } catch (e) {
     slot = `error: ${(e as Error).message}`;
   } finally {
     run("git", ["worktree", "remove", "--force", wt]);
   }
-  const posted = ghJson<Review[]>(["api", `repos/${cfg.repo}/pulls/${pr.number}/reviews?per_page=100`])
+  const posted = ghPages<Review[]>(`repos/${cfg.repo}/pulls/${pr.number}/reviews?per_page=100`).flat()
     .filter((r) => r.user?.login === cfg.login && r.commit_id === head).map((r) => r.state);
   const entry = { at: new Date().toISOString(), started, pr: pr.number, head, author_vendor: d.author, reviewer_vendor: d.reviewer,
     reviewer_login: cfg.login, slot_state: slot, posted_at_head: posted };

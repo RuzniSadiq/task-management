@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { authorVendor, decide, halted, pickReviewer, readEnv, requiredChecksGreen, roundCapReached, tierOf } from "../scripts/review-lane.ts";
+import { authorVendor, decide, halted, pickReviewer, publisherEnv, readEnv, requiredChecksGreen, roundCapReached, slotEvent, tierOf } from "../scripts/review-lane.ts";
 import type { CheckRun, PrFacts, Review } from "../scripts/review-lane.ts";
 
 const caps = { A: 1, B: 2, C: 3, default: "A" };
@@ -61,18 +61,34 @@ test("decide: fails closed on every unmet condition", () => {
   assert.equal(skip({ commitMessages: ["no trailer"] }), "skip");
 });
 
-test("AC3: the lane never posts a review or merges itself; its only review action is the Gibson's formal second opinion", () => {
+test("AC3: the lane never posts or merges itself; it reviews with second-opinion.sh and publishes with formal-review.sh", () => {
   const src = readFileSync(new URL("../scripts/review-lane.ts", import.meta.url), "utf8");
   const code = src.split("\n").filter((l) => !l.trimStart().startsWith("//")).join("\n");
   assert.doesNotMatch(code, /gh\s+pr\s+(review|merge)|"pr",\s*"(review|merge)"/);
   assert.doesNotMatch(code, /"(-X|--method)",\s*"(POST|PUT|PATCH|DELETE)"/i);
   assert.match(code, /second-opinion\.sh/);
-  assert.match(code, /GIBSON_FORMAL_REVIEW:\s*"1"/);
+  assert.match(code, /formal-review\.sh/);
+  // the reviewing AI runs with the token-free environment; only the publisher gets the token
+  assert.match(code, /run\("bash", args, readEnv\(process\.env\)\)/);
+  assert.match(code, /publisherEnv\(process\.env, token\)/);
+  assert.doesNotMatch(code, /GIBSON_FORMAL_REVIEW:\s*"1"/);
 });
 
-test("AC4: every gh read runs without the reviewer token", () => {
-  const env = readEnv({ GH_REVIEWER_TOKEN: "secret", GH_TOKEN: "operator", PATH: "/bin" });
+test("verdict: the Gibson slot-authority rule (#290) decides the formal event", () => {
+  assert.equal(slotEvent("second-opinion.sh: slot:codex state:approve"), "approve");
+  assert.equal(slotEvent("slot:codex state:approve\nslot:grok state:request-changes"), "request-changes");
+  assert.equal(slotEvent("slot:codex state:approve\nslot:grok state:no-verdict"), undefined);
+  assert.equal(slotEvent("no slot lines at all"), undefined);
+});
+
+test("AC4: gh reads and the reviewing AI run without the reviewer token; only the publisher holds it", () => {
+  const env = readEnv({ GH_REVIEWER_TOKEN: "secret", GIBSON_REVIEWER_TOKEN: "secret2", GIBSON_FORMAL_REVIEW: "1", GH_TOKEN: "operator", PATH: "/bin" });
   assert.equal(env.GH_REVIEWER_TOKEN, undefined);
+  assert.equal(env.GIBSON_REVIEWER_TOKEN, undefined);
+  assert.equal(env.GIBSON_FORMAL_REVIEW, undefined);
+  const pub = publisherEnv({ GIBSON_REVIEWER_TOKEN: "stale", PATH: "/bin" }, "fresh");
+  assert.equal(pub.GH_REVIEWER_TOKEN, "fresh");
+  assert.equal(pub.GIBSON_REVIEWER_TOKEN, undefined);
   assert.equal(env.GH_TOKEN, "operator");
   assert.equal(env.PATH, "/bin");
 });
@@ -87,5 +103,14 @@ test("AC5: the Gibson kill switch (gibson/HALT or GIBSON_HALT=1) stops the lane"
     assert.equal(halted(dir, {}), true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("AC1: every GitHub list the decision reads is fully paginated", () => {
+  const src = readFileSync(new URL("../scripts/review-lane.ts", import.meta.url), "utf8");
+  for (const list of ["check-runs", "/reviews", "/commits?"]) {
+    const calls = src.split("\n").filter((l) => l.includes(list) && l.includes("repos/"));
+    assert.ok(calls.length > 0, `no read of ${list}`);
+    for (const line of calls) assert.match(line, /ghPages</, `unpaginated read: ${line.trim()}`);
   }
 });
