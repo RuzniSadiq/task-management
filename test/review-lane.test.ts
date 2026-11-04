@@ -69,7 +69,7 @@ test("AC3: the lane never posts or merges itself; it reviews with second-opinion
   assert.match(code, /second-opinion\.sh/);
   assert.match(code, /formal-review\.sh/);
   // the reviewing AI runs with the token-free environment; only the publisher gets the token
-  assert.match(code, /run\("bash", args, readEnv\(process\.env\)\)/);
+  assert.match(code, /run\("bash", args, readEnv\(process\.env, \[token\]\)\)/);
   assert.match(code, /publisherEnv\(process\.env, token\)/);
   assert.doesNotMatch(code, /GIBSON_FORMAL_REVIEW:\s*"1"/);
 });
@@ -86,7 +86,12 @@ test("AC4: gh reads and the reviewing AI run without the reviewer token; only th
   assert.equal(env.GH_REVIEWER_TOKEN, undefined);
   assert.equal(env.GIBSON_REVIEWER_TOKEN, undefined);
   assert.equal(env.GIBSON_FORMAL_REVIEW, undefined);
-  const pub = publisherEnv({ GIBSON_REVIEWER_TOKEN: "stale", PATH: "/bin" }, "fresh");
+  // by value: the reviewer token is removed whatever variable holds it (e.g. GH_TOKEN)
+  const byValue = readEnv({ GH_TOKEN: "tok-123", OTHER: "x tok-123 y", PATH: "/bin" }, ["tok-123"]);
+  assert.deepEqual(byValue, { PATH: "/bin" });
+  assert.equal(readEnv({ GH_TOKEN: "operator" }, [""]).GH_TOKEN, "operator");
+  const pub = publisherEnv({ GIBSON_REVIEWER_TOKEN: "stale", GH_TOKEN: "fresh", PATH: "/bin" }, "fresh");
+  assert.equal(pub.GH_TOKEN, undefined);
   assert.equal(pub.GH_REVIEWER_TOKEN, "fresh");
   assert.equal(pub.GIBSON_REVIEWER_TOKEN, undefined);
   assert.equal(env.GH_TOKEN, "operator");
@@ -108,7 +113,8 @@ test("AC5: the Gibson kill switch (gibson/HALT or GIBSON_HALT=1) stops the lane"
 
 test("AC1: every GitHub list the decision reads is fully paginated", () => {
   const src = readFileSync(new URL("../scripts/review-lane.ts", import.meta.url), "utf8");
-  for (const list of ["check-runs", "/reviews", "/commits?"]) {
+  assert.doesNotMatch(src, /"pr",\s*"list"/, "open-PR discovery must not use the capped gh pr list");
+  for (const list of ["check-runs", "/reviews", "/commits?", "/pulls?state=open"]) {
     const calls = src.split("\n").filter((l) => l.includes(list) && l.includes("repos/"));
     assert.ok(calls.length > 0, `no read of ${list}`);
     for (const line of calls) assert.match(line, /ghPages</, `unpaginated read: ${line.trim()}`);

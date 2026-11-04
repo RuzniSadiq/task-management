@@ -114,18 +114,26 @@ function run(cmd: string, args: string[], env: NodeJS.ProcessEnv = process.env):
   return { code: r.status ?? 1, out: r.stdout, err: r.stderr };
 }
 
-/** Environment for every gh read AND for the reviewing AI: no reviewer token in any form. */
-export function readEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+/**
+ * Environment for every gh read AND for the reviewing AI: no reviewer token in any form.
+ * Removes the reviewer-token variables by name, and every variable whose value contains
+ * a given secret (e.g. the reviewer token placed in GH_TOKEN), whatever it is called.
+ */
+export function readEnv(env: NodeJS.ProcessEnv, secrets: string[] = []): NodeJS.ProcessEnv {
   const copy = { ...env };
   delete copy.GH_REVIEWER_TOKEN;
   delete copy.GIBSON_REVIEWER_TOKEN;
   delete copy.GIBSON_FORMAL_REVIEW; // second-opinion.sh must not publish; the lane publishes after
+  const live = secrets.filter((x) => x !== "");
+  for (const [k, v] of Object.entries(copy)) {
+    if (v !== undefined && live.some((x) => v.includes(x))) delete copy[k];
+  }
   return copy;
 }
 
 /** Environment for formal-review.sh only: the one process that holds the reviewer token. */
 export function publisherEnv(env: NodeJS.ProcessEnv, token: string): NodeJS.ProcessEnv {
-  return { ...readEnv(env), GH_REVIEWER_TOKEN: token };
+  return { ...readEnv(env, [token]), GH_REVIEWER_TOKEN: token };
 }
 
 /**
@@ -234,7 +242,7 @@ function review(cfg: Config, pr: GhPr, d: Extract<Decision, { action: "review" }
       cfg.gibson, "--repo", wt, "--reviewers", d.reviewer, "--author", d.author, "--base", "origin/main", "--branch", "HEAD",
       "--gate-status", `required checks green at ${head}`, "--task-file", writeTask(cfg, pr, key),
       "--pr", String(pr.number), "--github-repo", cfg.repo, "--out", out];
-    const r = run("bash", args, readEnv(process.env)); // the reviewing AI never sees the token
+    const r = run("bash", args, readEnv(process.env, [token])); // the reviewing AI never sees the token
     const event = slotEvent(r.out + r.err);
     slot = event ?? `no formal verdict (exit ${r.code})`;
     const now = gh(["pr", "view", String(pr.number), "--repo", cfg.repo, "--json", "headRefOid", "-q", ".headRefOid"]).trim();
@@ -259,9 +267,10 @@ function review(cfg: Config, pr: GhPr, d: Extract<Decision, { action: "review" }
 
 function pass(cfg: Config, opts: { pr?: number; dryRun: boolean }): void {
   const fields = "number,state,isDraft,baseRefName,headRefOid,title,body,labels,closingIssuesReferences";
-  const prs = opts.pr !== undefined
-    ? [ghJson<GhPr>(["pr", "view", String(opts.pr), "--repo", cfg.repo, "--json", fields])]
-    : ghJson<GhPr[]>(["pr", "list", "--repo", cfg.repo, "--state", "open", "--json", fields]);
+  // Discovery is the paginated REST list of every open PR; each is then read in full.
+  const numbers = opts.pr !== undefined ? [opts.pr]
+    : ghPages<{ number: number }[]>(`repos/${cfg.repo}/pulls?state=open&per_page=100`).flat().map((p) => p.number);
+  const prs = numbers.map((n) => ghJson<GhPr>(["pr", "view", String(n), "--repo", cfg.repo, "--json", fields]));
   if (prs.length === 0) log("no open pull requests");
   const attempted = readAttempted(cfg);
   let token: string | undefined;
