@@ -12,7 +12,7 @@ const login = "ruzni-reviewer";
 const head = "a".repeat(40);
 const green: CheckRun[] = required.map((name, i) => ({ id: i + 1, name, status: "completed", conclusion: "success", started_at: "2026-11-04T10:00:00Z" }));
 const claudeCommit = "feat: x\n\nSigned-off-by: A <a@x>\nAgent-Vendor: claude\n";
-const base: PrFacts = { state: "OPEN", isDraft: false, baseRefName: "main", head, labels: ["tier-a"], runs: green, reviews: [], commitMessages: [claudeCommit] };
+const base: PrFacts = { number: 19, state: "OPEN", isDraft: false, baseRefName: "main", head, labels: ["tier-a"], runs: green, reviews: [], commitMessages: [claudeCommit] };
 const opts = { login, required, caps, attempted: false };
 const changes = (commit_id: string): Review => ({ user: { login }, state: "CHANGES_REQUESTED", commit_id });
 
@@ -120,14 +120,19 @@ test("publication: the posted review is read back and verified (identity, head, 
 test("captain's cap exception is bounded to one exact PR and head", () => {
   const capped = { reviews: [changes("x"), changes("y"), changes("z")], labels: ["tier-c"] };
   assert.equal(decide({ ...base, ...capped }, opts).action, "skip");
-  assert.equal(decide({ ...base, ...capped }, { ...opts, capException: true }).action, "review");
+  assert.equal(decide({ ...base, ...capped }, { ...opts, capException: `19@${head}` }).action, "review");
+  // decide() itself binds the exception to this PR and head: a mismatch cannot bypass the cap
+  assert.equal(decide({ ...base, ...capped }, { ...opts, capException: `20@${head}` }).action, "skip");
+  assert.equal(decide({ ...base, ...capped }, { ...opts, capException: `19@${"b".repeat(40)}` }).action, "skip");
+  assert.equal(decide({ ...base, ...capped, head: "b".repeat(40) }, { ...opts, capException: `19@${head}` }).action, "skip");
+  assert.equal(decide({ ...base, ...capped }, { ...opts, capException: "19@*" }).action, "skip");
   assert.equal(capExceptionApplies(`19@${head}`, 19, head), true);
   assert.equal(capExceptionApplies(`19@${head}`, 19, "b".repeat(40)), false); // a later push is capped again
   assert.equal(capExceptionApplies(`20@${head}`, 19, head), false);
   assert.equal(capExceptionApplies("19@*", 19, head), false);
   assert.equal(capExceptionApplies(undefined, 19, head), false);
   // the exception never skips the other conditions
-  assert.equal(decide({ ...base, ...capped, runs: green.slice(1) }, { ...opts, capException: true }).action, "skip");
+  assert.equal(decide({ ...base, ...capped, runs: green.slice(1) }, { ...opts, capException: `19@${head}` }).action, "skip");
 });
 
 test("AC8: the rules module is pure: no child processes, no network, no writes", () => {

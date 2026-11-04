@@ -85,7 +85,7 @@ export function roundCapReached(reviews: Review[], login: string, tier: string, 
 }
 
 export interface PrFacts {
-  state: string; isDraft: boolean; baseRefName: string; head: string; labels: string[];
+  number: number; state: string; isDraft: boolean; baseRefName: string; head: string; labels: string[];
   runs: CheckRun[]; reviews: Review[]; commitMessages: string[];
 }
 
@@ -109,14 +109,15 @@ export function capExceptionApplies(value: string | undefined, pr: number, head:
 }
 
 /** Fail closed: review only when every condition is positively established. */
-export function decide(pr: PrFacts, opts: { login: string; required: string[]; caps: Caps; attempted: boolean; capException?: boolean }): Decision {
+export function decide(pr: PrFacts, opts: { login: string; required: string[]; caps: Caps; attempted: boolean; capException?: string }): Decision {
   if (pr.state !== "OPEN") return { action: "skip", reason: `PR is ${pr.state.toLowerCase()}` };
   if (pr.isDraft) return { action: "skip", reason: "draft" };
   if (pr.baseRefName !== "main") return { action: "skip", reason: `base is ${pr.baseRefName}, not main` };
   if (reviewedAtHead(pr.reviews, opts.login, pr.head)) return { action: "skip", reason: "already reviewed at this head" };
   if (opts.attempted) return { action: "skip", reason: "already attempted at this head (one attempt per head)" };
   const tier = tierOf(pr.labels, opts.caps);
-  if (roundCapReached(pr.reviews, opts.login, tier, opts.caps) && opts.capException !== true) {
+  // The exception is checked here, against this PR's number and head: a caller cannot widen it.
+  if (roundCapReached(pr.reviews, opts.login, tier, opts.caps) && !capExceptionApplies(opts.capException, pr.number, pr.head)) {
     return { action: "skip", reason: `Tier ${tier} round cap reached — captain decision required` };
   }
   const checks = requiredChecksGreen(pr.runs, opts.required);
