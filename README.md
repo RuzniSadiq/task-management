@@ -12,6 +12,22 @@ The Task Management API is under construction: its endpoints are not implemented
 
 - Node.js 22.18 or later
 
+## Quick start
+
+Install the dependencies:
+
+    npm ci
+
+Run the tests:
+
+    npm test
+
+Compile the project to `dist/`:
+
+    npm run build
+
+For the full gate (typecheck, lint, test, build), see "Run the checks (the green gate)" below.
+
 ## Setup (once per clone)
 
     npm ci
