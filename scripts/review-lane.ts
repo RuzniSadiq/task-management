@@ -24,8 +24,8 @@ import { join, resolve } from "node:path";
 export type Vendor = "claude" | "codex" | "grok" | "devin";
 const VENDORS: readonly string[] = ["claude", "codex", "grok", "devin"];
 
-export interface CheckRun { id: number; name: string; status: string; conclusion: string | null }
-export interface Review { user: { login: string } | null; state: string; commit_id: string }
+export interface CheckRun { id: number; name: string; status: string; conclusion: string | null; started_at?: string | null }
+export interface Review { id?: number; user: { login: string } | null; state: string; commit_id: string; submitted_at?: string | null }
 export type Caps = Record<string, number | string>;
 export type Decision =
   | { action: "review"; author: Vendor; reviewer: Vendor }
@@ -51,11 +51,24 @@ export function pickReviewer(author: Vendor): Vendor {
   return author === "codex" ? "claude" : "codex";
 }
 
-/** Every required check's latest run at this head completed with success. */
+/**
+ * Every required check's latest run at this head completed with success. "Latest" is by
+ * started_at, not by ID; if any run lacks a start time, or the newest start time is shared
+ * by runs that disagree, recency cannot be established and the check fails closed.
+ */
 export function requiredChecksGreen(runs: CheckRun[], required: string[]): { ok: true } | { ok: false; reason: string } {
   for (const name of required) {
-    const latest = runs.filter((r) => r.name === name).sort((a, b) => b.id - a.id)[0];
+    const named = runs.filter((r) => r.name === name);
+    if (named.length === 0) return { ok: false, reason: `required check '${name}' has not run` };
+    const times = named.map((r) => Date.parse(r.started_at ?? ""));
+    if (times.some((t) => Number.isNaN(t))) return { ok: false, reason: `required check '${name}' has a run with no start time (recency unknown)` };
+    const newest = Math.max(...times);
+    const tied = named.filter((_, i) => times[i] === newest);
+    const latest = tied[0];
     if (latest === undefined) return { ok: false, reason: `required check '${name}' has not run` };
+    if (tied.some((r) => r.status !== latest.status || r.conclusion !== latest.conclusion)) {
+      return { ok: false, reason: `required check '${name}' has conflicting runs at the same start time (recency unknown)` };
+    }
     if (latest.status !== "completed") return { ok: false, reason: `required check '${name}' is ${latest.status}` };
     if (latest.conclusion !== "success") return { ok: false, reason: `required check '${name}' concluded ${latest.conclusion ?? "none"}` };
   }
@@ -89,15 +102,34 @@ export interface PrFacts {
   runs: CheckRun[]; reviews: Review[]; commitMessages: string[];
 }
 
+/** The posted review, read back: by the reviewer identity, at the exact head, in the expected state, after this attempt began. */
+export function verifyPublished(reviews: Review[], login: string, head: string, event: "approve" | "request-changes", since: string):
+  { ok: true; id: number } | { ok: false; reason: string } {
+  const want = event === "approve" ? "APPROVED" : "CHANGES_REQUESTED";
+  const mine = reviews.filter((r) => r.user?.login === login && r.commit_id === head && Date.parse(r.submitted_at ?? "") >= Date.parse(since));
+  if (mine.length !== 1) return { ok: false, reason: `publication uncertain: ${mine.length} new reviews by ${login} at ${head.slice(0, 7)}` };
+  const only = mine[0];
+  if (only?.state !== want || only.id === undefined) return { ok: false, reason: `publication mismatch: state ${only?.state ?? "none"}, expected ${want}` };
+  return { ok: true, id: only.id };
+}
+
+/**
+ * A captain's bounded exception to the round cap (Gibson docs/review-protocol.md): it applies only to the
+ * exact "<pr>@<40-hex head>" named in REVIEW_LANE_CAP_EXCEPTION, so a later push is capped again.
+ */
+export function capExceptionApplies(value: string | undefined, pr: number, head: string): boolean {
+  return value !== undefined && /^\d+@[0-9a-f]{40}$/.test(value) && value === `${pr}@${head}`;
+}
+
 /** Fail closed: review only when every condition is positively established. */
-export function decide(pr: PrFacts, opts: { login: string; required: string[]; caps: Caps; attempted: boolean }): Decision {
+export function decide(pr: PrFacts, opts: { login: string; required: string[]; caps: Caps; attempted: boolean; capException?: boolean }): Decision {
   if (pr.state !== "OPEN") return { action: "skip", reason: `PR is ${pr.state.toLowerCase()}` };
   if (pr.isDraft) return { action: "skip", reason: "draft" };
   if (pr.baseRefName !== "main") return { action: "skip", reason: `base is ${pr.baseRefName}, not main` };
   if (reviewedAtHead(pr.reviews, opts.login, pr.head)) return { action: "skip", reason: "already reviewed at this head" };
   if (opts.attempted) return { action: "skip", reason: "already attempted at this head (one attempt per head)" };
   const tier = tierOf(pr.labels, opts.caps);
-  if (roundCapReached(pr.reviews, opts.login, tier, opts.caps)) {
+  if (roundCapReached(pr.reviews, opts.login, tier, opts.caps) && opts.capException !== true) {
     return { action: "skip", reason: `Tier ${tier} round cap reached — captain decision required` };
   }
   const checks = requiredChecksGreen(pr.runs, opts.required);
@@ -173,8 +205,7 @@ function loadConfig(): Config {
   const delivery = JSON.parse(readFileSync(".gibson-delivery.json", "utf8")) as { repo: string; reviewerLogin: string; requiredContexts: string[] };
   const gibson = process.env.GIBSON ?? join(homedir(), "Code", "the-gibson");
   const caps = JSON.parse(readFileSync(join(gibson, "config", "review-round-caps.json"), "utf8")) as Caps;
-  const stateDir = resolve("gibson", "review-lane");
-  mkdirSync(stateDir, { recursive: true });
+  const stateDir = resolve("gibson", "review-lane"); // created only when a real review starts (dry-run stays read-only)
   return { repo: delivery.repo, login: delivery.reviewerLogin, required: delivery.requiredContexts, caps, gibson, stateDir };
 }
 
@@ -203,6 +234,12 @@ function prFacts(cfg: Config, pr: GhPr): PrFacts {
     runs, reviews, commitMessages: commits.map((c) => c.commit.message) };
 }
 
+/** "<head>..<base sha>@<base ref>" as GitHub reports it now. */
+function rangeOf(cfg: Config, n: number): string {
+  return gh(["pr", "view", String(n), "--repo", cfg.repo, "--json", "headRefOid,baseRefOid,baseRefName",
+    "-q", '"\\(.headRefOid)..\\(.baseRefOid)@\\(.baseRefName)"']).trim();
+}
+
 function attemptedFile(cfg: Config): string {
   return join(cfg.stateDir, "attempted.json");
 }
@@ -229,9 +266,11 @@ function writeTask(cfg: Config, pr: GhPr, key: string): string {
 function review(cfg: Config, pr: GhPr, d: Extract<Decision, { action: "review" }>, token: string): void {
   const head = pr.headRefOid;
   const key = `pr${pr.number}-${head.slice(0, 7)}`;
+  mkdirSync(cfg.stateDir, { recursive: true });
   writeFileSync(attemptedFile(cfg), JSON.stringify([...readAttempted(cfg), `${pr.number}@${head}`], null, 2));
   const wt = resolve("..", `wt-review-${key}`);
   const started = new Date().toISOString();
+  const reviewed = rangeOf(cfg, pr.number);
   let slot = "unknown";
   try {
     run("git", ["fetch", "-q", "origin", "main", `pull/${pr.number}/head`]);
@@ -245,12 +284,20 @@ function review(cfg: Config, pr: GhPr, d: Extract<Decision, { action: "review" }
     const r = run("bash", args, readEnv(process.env, [token])); // the reviewing AI never sees the token
     const event = slotEvent(r.out + r.err);
     slot = event ?? `no formal verdict (exit ${r.code})`;
-    const now = gh(["pr", "view", String(pr.number), "--repo", cfg.repo, "--json", "headRefOid", "-q", ".headRefOid"]).trim();
-    if (event !== undefined && now !== head) slot = `not published: head moved to ${now.slice(0, 7)} during review`;
-    else if (event !== undefined) {
-      const pub = run(join(cfg.gibson, "scripts", "formal-review.sh"), ["--pr", String(pr.number), "--repo", cfg.repo,
-        "--event", event, "--body-file", out, "--commit", head], publisherEnv(process.env, token));
-      if (pub.code !== 0) slot = `formal-review.sh failed (exit ${pub.code}): ${pub.err.trim().split("\n").pop() ?? ""}`;
+    if (event !== undefined) {
+      // Immediately before publishing: same head, base and target as reviewed, and no verdict already there.
+      const now = rangeOf(cfg, pr.number);
+      const existing = ghPages<Review[]>(`repos/${cfg.repo}/pulls/${pr.number}/reviews?per_page=100`).flat();
+      if (now !== reviewed) slot = `not published: range moved during review (${reviewed} → ${now})`;
+      else if (reviewedAtHead(existing, cfg.login, head)) slot = "not published: a verdict already exists at this head (reconcile first)";
+      else {
+        const pub = run(join(cfg.gibson, "scripts", "formal-review.sh"), ["--pr", String(pr.number), "--repo", cfg.repo,
+          "--event", event, "--body-file", out, "--commit", head], publisherEnv(process.env, token));
+        const back = verifyPublished(ghPages<Review[]>(`repos/${cfg.repo}/pulls/${pr.number}/reviews?per_page=100`).flat(),
+          cfg.login, head, event, started);
+        if (pub.code !== 0 && !back.ok) slot = `formal-review.sh failed (exit ${pub.code}); ${back.reason}`;
+        else slot = back.ok ? `${event} (review ${back.id})` : back.reason;
+      }
     }
   } catch (e) {
     slot = `error: ${(e as Error).message}`;
@@ -276,7 +323,9 @@ function pass(cfg: Config, opts: { pr?: number; dryRun: boolean }): void {
   let token: string | undefined;
   for (const pr of prs) {
     if (halted()) { log("kill switch set — stopping"); return; }
-    const d = decide(prFacts(cfg, pr), { login: cfg.login, required: cfg.required, caps: cfg.caps,
+    const capException = capExceptionApplies(process.env.REVIEW_LANE_CAP_EXCEPTION, pr.number, pr.headRefOid);
+    if (capException) log(`PR #${pr.number} head ${pr.headRefOid.slice(0, 7)} — captain's bounded cap exception in effect`);
+    const d = decide(prFacts(cfg, pr), { login: cfg.login, required: cfg.required, caps: cfg.caps, capException,
       attempted: attempted.includes(`${pr.number}@${pr.headRefOid}`) });
     if (d.action === "skip") { log(`PR #${pr.number} head ${pr.headRefOid.slice(0, 7)} — skipped: ${d.reason}`); continue; }
     log(`PR #${pr.number} head ${pr.headRefOid.slice(0, 7)} — ready, author=${d.author} → reviewer=${d.reviewer}`);

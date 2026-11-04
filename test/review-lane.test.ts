@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { authorVendor, decide, halted, pickReviewer, publisherEnv, readEnv, requiredChecksGreen, roundCapReached, slotEvent, tierOf } from "../scripts/review-lane.ts";
+import { authorVendor, capExceptionApplies, decide, halted, pickReviewer, publisherEnv, readEnv, requiredChecksGreen, roundCapReached, slotEvent, tierOf, verifyPublished } from "../scripts/review-lane.ts";
 import type { CheckRun, PrFacts, Review } from "../scripts/review-lane.ts";
 
 const caps = { A: 1, B: 2, C: 3, default: "A" };
 const required = ["gate", "security-fast", "test-integrity", "DCO"];
 const login = "ruzni-reviewer";
 const head = "a".repeat(40);
-const green: CheckRun[] = required.map((name, i) => ({ id: i + 1, name, status: "completed", conclusion: "success" }));
+const green: CheckRun[] = required.map((name, i) => ({ id: i + 1, name, status: "completed", conclusion: "success", started_at: "2026-11-04T10:00:00Z" }));
 const claudeCommit = "feat: x\n\nSigned-off-by: A <a@x>\nAgent-Vendor: claude\n";
 const base: PrFacts = { state: "OPEN", isDraft: false, baseRefName: "main", head, labels: ["tier-a"], runs: green, reviews: [], commitMessages: [claudeCommit] };
 const opts = { login, required, caps, attempted: false };
@@ -32,8 +32,15 @@ test("reviewer is always a different vendor from the author (Law 5)", () => {
 test("required checks: missing, pending or failed latest run is not green", () => {
   assert.deepEqual(requiredChecksGreen(green, required), { ok: true });
   assert.equal(requiredChecksGreen(green.filter((r) => r.name !== "DCO"), required).ok, false);
-  assert.equal(requiredChecksGreen([...green, { id: 99, name: "gate", status: "in_progress", conclusion: null }], required).ok, false);
-  assert.equal(requiredChecksGreen([...green, { id: 99, name: "gate", status: "completed", conclusion: "failure" }], required).ok, false);
+  assert.equal(requiredChecksGreen([...green, { id: 99, name: "gate", status: "in_progress", conclusion: null, started_at: "2026-11-04T10:05:00Z" }], required).ok, false);
+  assert.equal(requiredChecksGreen([...green, { id: 99, name: "gate", status: "completed", conclusion: "failure", started_at: "2026-11-04T10:05:00Z" }], required).ok, false);
+  // latest is by start time, not by ID: a newer failure with a LOWER id still wins
+  assert.equal(requiredChecksGreen([...green, { id: 0, name: "gate", status: "completed", conclusion: "failure", started_at: "2026-11-04T10:05:00Z" }], required).ok, false);
+  // an older success with a higher id does not mask the newer state
+  assert.equal(requiredChecksGreen([...green, { id: 99, name: "gate", status: "completed", conclusion: "failure", started_at: "2026-11-04T09:00:00Z" }], required).ok, true);
+  // recency unknown → fail closed
+  assert.equal(requiredChecksGreen([...green, { id: 99, name: "gate", status: "completed", conclusion: "success", started_at: null }], required).ok, false);
+  assert.equal(requiredChecksGreen([...green, { id: 98, name: "gate", status: "completed", conclusion: "failure", started_at: "2026-11-04T10:00:00Z" }], required).ok, false);
 });
 
 test("round cap follows the Gibson caps per tier", () => {
@@ -119,4 +126,37 @@ test("AC1: every GitHub list the decision reads is fully paginated", () => {
     assert.ok(calls.length > 0, `no read of ${list}`);
     for (const line of calls) assert.match(line, /ghPages</, `unpaginated read: ${line.trim()}`);
   }
+});
+
+test("publication: the posted review is read back and verified (identity, head, state, new)", () => {
+  const since = "2026-11-04T10:00:00Z";
+  const ok: Review = { id: 7, user: { login }, state: "APPROVED", commit_id: head, submitted_at: "2026-11-04T10:01:00Z" };
+  assert.deepEqual(verifyPublished([ok], login, head, "approve", since), { ok: true, id: 7 });
+  assert.equal(verifyPublished([], login, head, "approve", since).ok, false); // nothing posted: uncertain
+  assert.equal(verifyPublished([{ ...ok, state: "CHANGES_REQUESTED" }], login, head, "approve", since).ok, false);
+  assert.equal(verifyPublished([{ ...ok, user: { login: "someone-else" } }], login, head, "approve", since).ok, false);
+  assert.equal(verifyPublished([{ ...ok, commit_id: "b".repeat(40) }], login, head, "approve", since).ok, false);
+  assert.equal(verifyPublished([{ ...ok, submitted_at: "2026-11-04T09:00:00Z" }], login, head, "approve", since).ok, false); // old review
+  assert.equal(verifyPublished([ok, { ...ok, id: 8 }], login, head, "approve", since).ok, false); // duplicate: reconcile
+});
+
+test("captain's cap exception is bounded to one exact PR and head", () => {
+  const capped = { reviews: [changes("x"), changes("y"), changes("z")], labels: ["tier-c"] };
+  assert.equal(decide({ ...base, ...capped }, opts).action, "skip");
+  assert.equal(decide({ ...base, ...capped }, { ...opts, capException: true }).action, "review");
+  assert.equal(capExceptionApplies(`19@${head}`, 19, head), true);
+  assert.equal(capExceptionApplies(`19@${head}`, 19, "b".repeat(40)), false); // a later push is capped again
+  assert.equal(capExceptionApplies(`20@${head}`, 19, head), false);
+  assert.equal(capExceptionApplies("19@*", 19, head), false);
+  assert.equal(capExceptionApplies(undefined, 19, head), false);
+  // the exception never skips the other conditions
+  assert.equal(decide({ ...base, ...capped, runs: green.slice(1) }, { ...opts, capException: true }).action, "skip");
+});
+
+test("--dry-run is read-only: the state directory is created only when a real review starts", () => {
+  const src = readFileSync(new URL("../scripts/review-lane.ts", import.meta.url), "utf8");
+  const load = src.slice(src.indexOf("function loadConfig"), src.indexOf("function reviewerToken"));
+  assert.doesNotMatch(load, /mkdirSync|writeFileSync|appendFileSync/);
+  const reviewFn = src.slice(src.indexOf("function review("), src.indexOf("function pass("));
+  assert.match(reviewFn, /mkdirSync\(cfg\.stateDir/);
 });

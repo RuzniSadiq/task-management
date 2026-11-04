@@ -86,7 +86,10 @@ token for the agents they run (rules in `AGENTS.md` → "Agent credentials").
    It reads the token from the Keychain (`gibson-reviewer-token`) and stops on the Gibson
    kill switch (`gibson/HALT` or `GIBSON_HALT=1`). It reviews a PR only when its commits
    carry exactly one `Agent-Vendor` trailer, and always picks a reviewer of a different
-   vendor (Gibson Law 5).
+   vendor (Gibson Law 5). After the per-tier round cap (The Gibson's
+   `config/review-round-caps.json`) the lane stops and the captain decides. A captain's
+   one-off exception is recorded on the PR and passed as
+   `REVIEW_LANE_CAP_EXCEPTION=<pr>@<full head sha>`: it covers that exact commit only.
 
 ### What the restricted token does and does not cover
 
