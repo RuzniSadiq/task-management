@@ -93,7 +93,14 @@ export interface PrFacts {
 export function verifyPublished(reviews: Review[], login: string, head: string, event: "approve" | "request-changes", since: string):
   { ok: true; id: number } | { ok: false; reason: string } {
   const want = event === "approve" ? "APPROVED" : "CHANGES_REQUESTED";
-  const mine = reviews.filter((r) => r.user?.login === login && r.commit_id === head && Date.parse(r.submitted_at ?? "") >= Date.parse(since));
+  const start = Date.parse(since);
+  if (Number.isNaN(start)) return { ok: false, reason: "publication uncertain: attempt start time unknown" };
+  const atHead = reviews.filter((r) => r.user?.login === login && r.commit_id === head);
+  // any same-reviewer, same-head review whose time is unknown makes "exactly one new" unprovable
+  if (atHead.some((r) => Number.isNaN(Date.parse(r.submitted_at ?? "")))) {
+    return { ok: false, reason: `publication uncertain: a review by ${login} at ${head.slice(0, 7)} has no valid submission time` };
+  }
+  const mine = atHead.filter((r) => Date.parse(r.submitted_at ?? "") > start); // strictly after the attempt began
   if (mine.length !== 1) return { ok: false, reason: `publication uncertain: ${mine.length} new reviews by ${login} at ${head.slice(0, 7)}` };
   const only = mine[0];
   if (only?.state !== want || only.id === undefined) return { ok: false, reason: `publication mismatch: state ${only?.state ?? "none"}, expected ${want}` };

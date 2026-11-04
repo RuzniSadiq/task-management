@@ -115,6 +115,12 @@ test("publication: the posted review is read back and verified (identity, head, 
   assert.equal(verifyPublished([{ ...ok, commit_id: "b".repeat(40) }], login, head, "approve", since).ok, false);
   assert.equal(verifyPublished([{ ...ok, submitted_at: "2026-11-04T09:00:00Z" }], login, head, "approve", since).ok, false); // old review
   assert.equal(verifyPublished([ok, { ...ok, id: 8 }], login, head, "approve", since).ok, false); // duplicate: reconcile
+  assert.equal(verifyPublished([{ ...ok, submitted_at: since }], login, head, "approve", since).ok, false); // equal time is not "after"
+  assert.equal(verifyPublished([ok, { ...ok, id: 9, submitted_at: null }], login, head, "approve", since).ok, false); // unknown recency
+  assert.equal(verifyPublished([ok, { ...ok, id: 9, submitted_at: "not a date" }], login, head, "approve", since).ok, false);
+  assert.equal(verifyPublished([ok], login, head, "approve", "not a date").ok, false); // attempt start unknown
+  // reviews by others, or at other heads, never affect the result
+  assert.deepEqual(verifyPublished([ok, { ...ok, id: 10, user: { login: "x" }, submitted_at: null }], login, head, "approve", since), { ok: true, id: 7 });
 });
 
 test("captain's cap exception is bounded to one exact PR and head", () => {
