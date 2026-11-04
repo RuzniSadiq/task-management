@@ -1,0 +1,59 @@
+# Detective control for released artefacts (issue #40, Scenario C). release.yml is the preventive
+# side; this re-verifies what every published release serves, daily and after release events.
+#
+# FINOS controls evaluated here (logic in scripts/verify-release.ts):
+#   SDLC-PREV-003 Software Artifact Provenance  `gh attestation verify` on the downloaded tarball
+#   SDLC-PREV-002 Content Addressable IDs       recomputed sha256 vs SHA256SUMS and release-evidence.json
+#   OP-007        Monitoring                    scheduled run; a failure opens/comments a control-finding issue
+# Evidence: verify-release-evidence.json (task-management.control-evidence/v1, event release.verified),
+# uploaded as the run's verify-release-evidence artifact.
+#
+# Detection latency: replacing an asset (`gh release upload --clobber`, `delete-asset`) does not
+# reliably emit a `release` event, so the daily schedule is the backstop: worst case about 24h.
+name: verify-release
+
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+  release:
+    types: [published, edited]
+  # Releases created by release.yml use GITHUB_TOKEN, which does not emit a `release` event.
+  # Run after the release workflow completes so a fresh release is verified immediately.
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: verify-release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      attestations: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      # Node builtins only, run from source via type stripping: no npm install needed.
+      - name: Re-verify every published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/verify-release.ts --repo "$GITHUB_REPOSITORY" --out verify-release-evidence.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: verify-release-evidence
+          path: verify-release-evidence.json
+          if-no-files-found: error
