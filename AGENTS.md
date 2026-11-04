@@ -61,8 +61,10 @@ Applies to every agent runtime (Claude Code, Codex, Grok, …) and every develop
   anything outside these through `gh`/the API (e.g. changing branch protection,
   approving a release, reading secrets). `git push` is not covered by this token;
   pushes are governed by branch protection on `main`, which applies to every credential.
-- The reviewer identity's token (`ruzni-reviewer`) is used only by the review step
-  (`second-opinion.sh` → `formal-review.sh`), never exported to a builder.
+- The reviewer identity's token (`ruzni-reviewer`) is used only by the review lane
+  (`scripts/review-lane.ts`), run in its own terminal, which passes it **only** to The
+  Gibson's `formal-review.sh`. The reviewing AI (`second-opinion.sh`) never holds it, and it
+  is never exported to a builder. Builders never post reviews.
 - Run agents through The Gibson's `scripts/loop.sh`; it installs
   `scripts/repo-boundary-guard.sh` in front of `git` for every runner, which refuses
   commits/pushes that leave this repository or modify gate configuration.
@@ -80,7 +82,7 @@ Applies to every agent runtime (Claude Code, Codex, Grok, …) and every develop
 ### Framework warnings
 - TypeScript is pinned to **5.9.x**: typescript-eslint supports only TS < 6.1. Do not upgrade TypeScript until it does.
 - Lint is **ESLint 9 + typescript-eslint (type-checked)**. Do not add oxlint or another linter.
-- Lint covers `src/` and `test/`; both must be in `tsconfig.json` `include`.
+- Lint covers `src/`, `test/` and `scripts/*.ts`; all three must be in `tsconfig.json` `include`.
 - Node **≥ 22.18** runs `.ts` directly via type stripping (tests run on source, no build step).
 - Relative imports **must** use the `.ts` extension (`./x.ts`, never `./x.js`). `tsc` accepts
   `.js` but Node then fails at runtime with `ERR_MODULE_NOT_FOUND`; the build rewrites
