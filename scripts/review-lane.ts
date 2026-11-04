@@ -16,7 +16,7 @@
 // Stop: Ctrl-C, or the Gibson kill switch (gibson/HALT in this checkout, or GIBSON_HALT=1).
 
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { capExceptionApplies, decide, halted, publisherEnv, readEnv, reviewedAtHead, slotEvent, verifyPublished } from "./review-lane-rules.ts";
@@ -280,6 +280,53 @@ function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
 }
 
+/**
+ * The single-flight lock (D-018) on real files. Every step is atomic and fails closed:
+ * - the lock appears with its PID already inside it (written to a temp file, then hard-linked into
+ *   place), so a reader never sees an empty or half-written lock and mistakes it for a stale one;
+ * - a lock with an unreadable holder is treated as held, never as stale;
+ * - a stale lock is replaced only by the one contender that holds the takeover guard, and only
+ *   after re-reading the lock under that guard, so two contenders cannot both replace it;
+ * - unlock removes the lock only if it still holds our PID.
+ * A leftover takeover guard (a crash inside the few microseconds it is held) skips passes rather
+ * than risking two lanes: remove `lane.lock.takeover` by hand.
+ * `hooks` exist for the tests to interleave a second contender at the exact racy points.
+ */
+export function fileLock(opts: { pid: number; alive: (pid: number) => boolean; hooks?: { afterStaleCheck?: () => void; underGuard?: () => void } }): { lock(path: string): boolean; unlock(path: string): void } {
+  const create = (path: string): boolean => {
+    const tmp = `${path}.${opts.pid}.tmp`;
+    writeFileSync(tmp, String(opts.pid));
+    try { linkSync(tmp, path); return true; } catch { return false; } finally { rmSync(tmp, { force: true }); }
+  };
+  const holderOf = (path: string): string | undefined => (existsSync(path) ? readFileSync(path, "utf8").trim() : undefined);
+  return {
+    lock(path) {
+      if (create(path)) return true;
+      const held = holderOf(path);
+      if (held === undefined) return create(path); // released between our attempt and our read
+      const holder = Number(held);
+      if (!/^\d+$/.test(held) || holder <= 0) return false; // unreadable holder: fail closed
+      if (holder !== opts.pid && opts.alive(holder)) return false;
+      opts.hooks?.afterStaleCheck?.();
+      const guard = `${path}.takeover`;
+      if (!create(guard)) return false; // someone else is replacing it
+      try {
+        opts.hooks?.underGuard?.();
+        const now = holderOf(path);
+        if (now === undefined) return create(path);
+        if (now !== held) return false; // it changed under us: someone else holds it now
+        rmSync(path, { force: true });
+        return create(path);
+      } finally {
+        rmSync(guard, { force: true });
+      }
+    },
+    unlock(path) {
+      if (holderOf(path) === String(opts.pid)) rmSync(path, { force: true });
+    },
+  };
+}
+
 function realIo(): Io {
   const run = (cmd: string, args: string[], env: NodeJS.ProcessEnv) => {
     const r = spawnSync(cmd, args, { encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
@@ -294,21 +341,14 @@ function realIo(): Io {
     },
     run,
     read: (p) => (existsSync(p) ? readFileSync(p, "utf8") : undefined),
-    write: (p, t) => writeFileSync(p, t),
+    write(p, t) { // crash-safe: a half-written state file would make every later pass fail on JSON.parse
+      const tmp = `${p}.${process.pid}.tmp`;
+      writeFileSync(tmp, t);
+      renameSync(tmp, p);
+    },
     append: (p, t) => appendFileSync(p, t),
     mkdir: (p) => mkdirSync(p, { recursive: true }),
-    lock(p) {
-      try {
-        writeFileSync(p, String(process.pid), { flag: "wx" }); // atomic create-if-absent
-        return true;
-      } catch {
-        const holder = Number(readFileSync(p, "utf8").trim());
-        if (Number.isInteger(holder) && holder > 0 && holder !== process.pid && alive(holder)) return false;
-        rmSync(p, { force: true }); // stale lock from a lane that died
-        try { writeFileSync(p, String(process.pid), { flag: "wx" }); return true; } catch { return false; }
-      }
-    },
-    unlock: (p) => rmSync(p, { force: true }),
+    ...fileLock({ pid: process.pid, alive }),
     now: () => new Date().toISOString(),
     log: (m) => console.log(`review-lane: ${m}`),
   };

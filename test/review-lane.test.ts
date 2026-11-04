@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { GIBSON_BLOCKER_RULE, Lane } from "../scripts/review-lane.ts";
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { GIBSON_BLOCKER_RULE, Lane, fileLock } from "../scripts/review-lane.ts";
 import type { Config, Io } from "../scripts/review-lane.ts";
 import type { Review } from "../scripts/review-lane-rules.ts";
 
@@ -338,4 +340,66 @@ test("AC10: a kill switch pulled during the pre-publication recheck stops public
   assert.deepEqual(pubs(f), []);
   assert.deepEqual(attempts(f), []);
   assert.ok(f.events.some((e) => e.includes("not published: kill switch set")));
+});
+
+// ---- single-flight lock on real files (round 3: stale-lock takeover must be atomic)
+const DEAD = 999_999;
+const lockEnv = () => {
+  const dir = mkdtempSync(join(tmpdir(), "lane-lock-"));
+  const path = join(dir, "lane.lock");
+  return { dir, path, stale: () => writeFileSync(path, String(DEAD)), holder: () => readFileSync(path, "utf8"), done: () => rmSync(dir, { recursive: true, force: true }) };
+};
+const isAlive = (pid: number) => pid > 0 && pid !== DEAD; // like process.kill: 0, NaN and unknown PIDs are not live processes
+
+test("lock: of two contenders racing to replace the same stale lock, exactly one wins (B acts while A holds the takeover guard)", () => {
+  const e = lockEnv();
+  e.stale();
+  let b: boolean | undefined;
+  const B = fileLock({ pid: 102, alive: isAlive });
+  const A = fileLock({ pid: 101, alive: isAlive, hooks: { underGuard: () => { b = B.lock(e.path); } } });
+  const a = A.lock(e.path);
+  assert.deepEqual([a, b], [true, false]);
+  assert.equal(e.holder(), "101");
+  e.done();
+});
+
+test("lock: of two contenders racing to replace the same stale lock, exactly one wins (B completes a takeover before A reaches the guard)", () => {
+  const e = lockEnv();
+  e.stale();
+  let b: boolean | undefined;
+  const B = fileLock({ pid: 102, alive: isAlive });
+  const A = fileLock({ pid: 101, alive: isAlive, hooks: { afterStaleCheck: () => { b = B.lock(e.path); } } });
+  const a = A.lock(e.path);
+  assert.deepEqual([a, b], [false, true]); // A must not remove B's fresh lock
+  assert.equal(e.holder(), "102");
+  e.done();
+});
+
+test("lock: a live holder keeps it; a dead one is replaced; a lock with an unreadable holder is held, never stale", () => {
+  const e = lockEnv();
+  assert.equal(fileLock({ pid: 101, alive: isAlive }).lock(e.path), true);
+  assert.equal(fileLock({ pid: 102, alive: isAlive }).lock(e.path), false); // 101 is alive
+  e.stale();
+  assert.equal(fileLock({ pid: 103, alive: isAlive }).lock(e.path), true); // dead holder replaced
+  writeFileSync(e.path, ""); // e.g. a lock caught mid-write by an older writer
+  assert.equal(fileLock({ pid: 104, alive: isAlive }).lock(e.path), false);
+  writeFileSync(e.path, "not-a-pid");
+  assert.equal(fileLock({ pid: 105, alive: isAlive }).lock(e.path), false);
+  assert.equal(readFileSync(e.path, "utf8"), "not-a-pid"); // untouched
+  e.done();
+});
+
+test("lock: unlock removes only a lock that still holds our PID; no temp or guard files are left behind", () => {
+  const e = lockEnv();
+  const A = fileLock({ pid: 101, alive: isAlive });
+  A.lock(e.path);
+  fileLock({ pid: 102, alive: isAlive }).unlock(e.path); // not the holder
+  assert.equal(e.holder(), "101");
+  A.unlock(e.path);
+  assert.equal(existsSync(e.path), false);
+  e.stale();
+  fileLock({ pid: 103, alive: isAlive }).lock(e.path); // takeover path
+  assert.equal(existsSync(`${e.path}.takeover`), false);
+  assert.equal(existsSync(`${e.path}.103.tmp`), false);
+  e.done();
 });
