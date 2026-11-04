@@ -14,7 +14,7 @@ const greenRuns = cfg.required.map((name, i) => ({ id: i + 1, name, status: "com
 
 interface Scenario {
   prs?: number[]; headNow?: string[]; wtHead?: string; wtBase?: string; fetchCode?: number; addCode?: number;
-  reviewerOut?: string; postReview?: boolean; readBackFails?: number; failView?: number; envExtra?: NodeJS.ProcessEnv;
+  reviewerOut?: string; postReview?: boolean; commentDuringReview?: boolean; postSameSecond?: boolean; readBackFails?: number; failView?: number; envExtra?: NodeJS.ProcessEnv;
 }
 
 /** A fake Io that records everything the runner does. */
@@ -58,10 +58,15 @@ function fake(sc: Scenario = {}) {
       if (cmd === "git" && args.includes("remove")) { events.push("worktree-remove"); return { code: 0, out: "", err: "" }; }
       if (cmd === "git" && args.includes("HEAD")) return { code: 0, out: `${sc.wtHead ?? head}\n`, err: "" };
       if (cmd === "git" && args.includes("origin/main")) return { code: 0, out: `${sc.wtBase ?? base}\n`, err: "" };
-      if (cmd === "bash") { events.push("reviewer"); return { code: 0, out: "", err: sc.reviewerOut ?? "second-opinion.sh: slot:codex state:approve\n" }; }
+      if (cmd === "bash") {
+        events.push("reviewer");
+        // an unrelated same-identity review appearing while the review runs (before publication)
+        if (sc.commentDuringReview === true) reviews.push({ id: 50, user: { login: cfg.login }, state: "COMMENTED", commit_id: head, submitted_at: new Date(clock).toISOString() });
+        return { code: 0, out: "", err: sc.reviewerOut ?? "second-opinion.sh: slot:codex state:approve\n" }; }
       if (cmd.endsWith("formal-review.sh")) {
         events.push("formal-review");
-        if (sc.postReview !== false) reviews.push({ id: 99, user: { login: cfg.login }, state: "APPROVED", commit_id: head, submitted_at: new Date(clock + 500).toISOString() });
+        const at = sc.postSameSecond === true ? new Date(Math.floor(clock / 1000) * 1000).toISOString() : new Date(clock + 500).toISOString();
+        if (sc.postReview !== false) reviews.push({ id: 99, user: { login: cfg.login }, state: "APPROVED", commit_id: head, submitted_at: at });
         return { code: 0, out: "", err: "" };
       }
       throw new Error(`unexpected run ${cmd} ${args.join(" ")}`);
@@ -243,4 +248,29 @@ test("one PR's error never blocks the others", () => {
   assert.ok(f.events.some((e) => e.includes("PR #6 — skipped: error")));
   assert.equal(count(f, "formal-review"), 1); // PR #7 still reviewed
   assert.equal(f.locks.size, 0); // and the lock is released
+});
+
+test("AC5: a reviewer that never started (missing script) consumes no attempt, however often it fails", () => {
+  const f = fake({ reviewerOut: "bash: /gibson/scripts/lib/wall-timeout.sh: No such file or directory\n" });
+  const lane = new Lane(cfg, f.io, TOKEN);
+  for (let i = 0; i < 3; i++) lane.pass({ dryRun: false });
+  assert.equal(count(f, "reviewer"), 3); // retried every pass, never locked out
+  assert.deepEqual(attempts(f), []);
+  assert.equal(lane.attempted(7, head), false);
+  assert.ok(f.events.some((e) => e.includes("reviewer did not start")));
+  // whereas a reviewer that ran but gave no verdict does consume (one retry)
+  const nv = fake({ reviewerOut: "second-opinion.sh: slot:codex state:no-verdict\n" });
+  new Lane(cfg, nv.io, TOKEN).pass({ dryRun: false });
+  assert.deepEqual(attempts(nv), [`7@${head}#no-verdict`]);
+});
+
+test("AC6: the read-back window opens at publication, not at the start of the attempt", () => {
+  // a same-identity review that appeared during the review must not be counted as ours
+  const f = fake({ commentDuringReview: true });
+  new Lane(cfg, f.io, TOKEN).pass({ dryRun: false });
+  assert.equal(pubs(f)[0]?.status, "published:99");
+  // and our own review, stamped within the same whole second as the cutoff, is still recognised
+  const g = fake({ postSameSecond: true });
+  new Lane(cfg, g.io, TOKEN).pass({ dryRun: false });
+  assert.equal(pubs(g)[0]?.status, "published:99");
 });

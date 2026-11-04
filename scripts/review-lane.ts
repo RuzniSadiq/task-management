@@ -208,11 +208,14 @@ export class Lane {
       const r = this.io.run("bash", ["-c", 'source "$1/scripts/lib/wall-timeout.sh" && g="$1" && shift && run_with_wall_timeout 900 "$g/scripts/second-opinion.sh" "$@"', "_",
         this.cfg.gibson, "--repo", wt, "--reviewers", d.reviewer, "--author", d.author, "--base", reviewed.base, "--branch", "HEAD",
         "--gate-status", `required checks green at ${reviewed.head}`, "--task-file", task, "--out", out], env); // AC2: token-free
+      // AC5: an attempt is consumed only if second-opinion.sh provably started (its own status
+      // lines are present). A launch failure (missing script, timeout helper, interpreter) consumes nothing.
+      if (!/^second-opinion\.sh: /m.test(r.out + r.err)) { outcome = `reviewer did not start (exit ${r.code}): ${(r.err.trim().split("\n").pop() ?? "").slice(0, 200)}`; return; }
       const event = slotEvent(r.out + r.err);
-      // AC5: an attempt is consumed only once the reviewer has run; a run with no verdict allows one retry
+      // a reviewer that ran but returned no verdict allows one retry (review-protocol)
       if (event === undefined) { this.mark(`${v.number}@${reviewed.head}#no-verdict`); outcome = `no formal verdict (exit ${r.code})`; return; }
       this.mark(`${v.number}@${reviewed.head}`);
-      outcome = this.publish(v.number, reviewed, event, out, started);
+      outcome = this.publish(v.number, reviewed, event, out);
     } catch (e) {
       outcome = `error: ${(e as Error).message}`;
     } finally {
@@ -224,7 +227,7 @@ export class Lane {
   }
 
   /** AC6/AC7: re-check, record, publish via formal-review.sh only, read back. Never publishes twice. */
-  private publish(n: number, reviewed: Range, event: "approve" | "request-changes", out: string, since: string): string {
+  private publish(n: number, reviewed: Range, event: "approve" | "request-changes", out: string): string {
     if (this.token === undefined) return "not published: no reviewer token";
     const now = this.range(this.view(n));
     if (now.head !== reviewed.head || now.base !== reviewed.base || now.target !== reviewed.target) {
@@ -233,11 +236,17 @@ export class Lane {
     if (reviewedAtHead(this.reviews(n), this.cfg.login, reviewed.head)) return "not published: a verdict already exists at this head";
     const pubs = this.list<Publication>(this.publicationsFile);
     if (pubs.some((p) => p.pr === n && p.head === reviewed.head)) return "not published: a publication is already recorded for this head";
-    const record: Publication = { pr: n, head: reviewed.head, event, since, status: "pending" };
+    // The read-back window opens immediately before publishing, not when the attempt began, so an
+    // unrelated review that appeared during the review cannot be taken for ours. GitHub's
+    // submitted_at has whole-second precision: floor to the second and step back one, so our own
+    // review posted within the same second is still "after" the cutoff. (An existing verdict at
+    // this head already blocked publication above.)
+    const cutoff = new Date(Math.floor(Date.parse(this.io.now()) / 1000) * 1000 - 1000).toISOString();
+    const record: Publication = { pr: n, head: reviewed.head, event, since: cutoff, status: "pending" };
     this.io.write(this.publicationsFile, JSON.stringify([...pubs, record], null, 2)); // recorded BEFORE publishing
     this.io.run(join(this.cfg.gibson, "scripts", "formal-review.sh"), ["--pr", String(n), "--repo", this.cfg.repo, "--event", event,
       "--body-file", out, "--commit", reviewed.head], publisherEnv(this.io.env, this.token));
-    const back = verifyPublished(this.reviews(n), this.cfg.login, reviewed.head, event, since);
+    const back = verifyPublished(this.reviews(n), this.cfg.login, reviewed.head, event, record.since);
     record.status = back.ok ? `published:${back.id}` : `uncertain: ${back.reason}`;
     this.io.write(this.publicationsFile, JSON.stringify([...pubs, record], null, 2));
     return back.ok ? `${event} (review ${back.id})` : record.status;
