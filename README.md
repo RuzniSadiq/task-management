@@ -6,7 +6,10 @@ A small Task Management API, built by AI agents through
 
 ## Project status
 
-The Task Management API is under construction: its endpoints are not implemented yet. Progress is tracked in this repository's issues.
+The Task Management API is implemented: you can create tasks, list them, and update a
+task's status, and tasks are saved to a local JSON file. See [Using the API](#using-the-api)
+for how to start the server and call it. Remaining work is tracked in this repository's
+issues.
 
 ## Requirements
 
@@ -27,6 +30,85 @@ Compile the project to `dist/`:
     npm run build
 
 For the full gate (typecheck, lint, test, build), see "Run the checks (the green gate)" below.
+
+## Using the API
+
+### Start the server
+
+    node src/server.ts
+
+Node runs the TypeScript source directly; no build step is needed. The server prints
+the address it listens on and the tasks file it uses:
+
+    Task API listening on http://127.0.0.1:3000 (tasks file: data/tasks.json)
+
+Stop it with Ctrl+C. Three environment variables configure it; an unset or empty
+variable uses the default:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `TASKS_FILE` | `data/tasks.json` | JSON file the tasks are saved to. It and its folder are created on the first write. |
+| `HOST` | `127.0.0.1` | Address to listen on (only this machine by default). |
+| `PORT` | `3000` | Port to listen on, an integer from 0 to 65535. The server refuses to start otherwise. |
+
+For example:
+
+    TASKS_FILE=/tmp/tasks.json PORT=8080 node src/server.ts
+
+### Tasks
+
+A task looks like this:
+
+    {
+      "id": "0b7e2f5c-3c1a-4d8e-9f4a-2a6b1c9d8e7f",
+      "title": "Write the README",
+      "status": "todo",
+      "createdAt": "2026-11-04T17:00:00.000Z",
+      "updatedAt": "2026-11-04T17:00:00.000Z"
+    }
+
+- `id` is a UUID the server assigns.
+- `title` is required. Leading and trailing spaces are removed; the result must not be
+  blank and must be at most 200 characters.
+- `status` is one of `todo`, `in_progress` or `done`, and is `todo` when not given.
+- `createdAt` and `updatedAt` are UTC timestamps. `updatedAt` changes when the status does.
+
+### Create a task: `POST /tasks`
+
+The body is a JSON object with `title` and, optionally, `status`. The response is
+`201 Created` with the new task.
+
+    curl -i -X POST http://127.0.0.1:3000/tasks \
+      -H 'content-type: application/json' \
+      -d '{"title": "Write the README"}'
+
+### List tasks: `GET /tasks`
+
+The response is `200 OK` with a JSON array of every task, oldest first.
+
+    curl -i http://127.0.0.1:3000/tasks
+
+### Update a task's status: `PATCH /tasks/:id/status`
+
+Replace `:id` with the task's `id`. The body is a JSON object with `status`. The
+response is `200 OK` with the updated task.
+
+    curl -i -X PATCH http://127.0.0.1:3000/tasks/0b7e2f5c-3c1a-4d8e-9f4a-2a6b1c9d8e7f/status \
+      -H 'content-type: application/json' \
+      -d '{"status": "in_progress"}'
+
+### Errors
+
+Every error response is JSON with a single `error` field that explains the problem:
+
+    {"error": "title must not be blank"}
+
+| Status | When |
+|---|---|
+| `400 Bad Request` | The body is not valid JSON, is not a JSON object, has a field the endpoint does not accept, or has an invalid or missing `title` or `status`. |
+| `404 Not Found` | No task has that id, or no endpoint matches the path. |
+| `405 Method Not Allowed` | The path exists but not for that method. The `Allow` header lists the methods that work. |
+| `413 Payload Too Large` | The request body is larger than 64 KiB (65536 bytes). |
 
 ## Setup (once per clone)
 
