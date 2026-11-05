@@ -10,7 +10,7 @@
 //   required-checks-green         every required check's latest run at that head succeeded
 //   dco-signoff                   every commit carries a Signed-off-by trailer
 //   agent-vendor-trailer          every commit carries exactly one Agent-Vendor, all the same (authorVendor)
-//   vendor-separation             the approving review's vendor differs from the author's (pickReviewer)
+//   vendor-separation             the approving review's vendor is the one pickReviewer selects for the author's vendor
 // And for the repository:
 //   branch-protection             live protection of main equals .gibson-delivery.json
 //   no-direct-push                every commit on main since the base belongs to a merged PR
@@ -129,7 +129,7 @@ export interface Options { repo: string; run: Run; now: () => string; since: str
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e)).trim().split("\n")[0] ?? "";
 const SIGNED_OFF = /^Signed-off-by:[ \t]*\S.*<[^<>\s]+>[ \t]*$/m;
 /** The lane's review report opens `## Second opinion — <vendor>`. */
-const REVIEWER_VENDOR = /^##[ \t]+Second opinion[ \t]*[—–-][ \t]*([A-Za-z]+)/m;
+const REVIEWER_VENDOR_ALL = /^##[ \t]+Second opinion[ \t]*[—–-][ \t]*([A-Za-z]+)/gm;
 
 /** Load and validate .gibson-delivery.json. Throws with a readable message. */
 export function parseConfig(text: string): DeliveryConfig {
@@ -210,10 +210,12 @@ export function evaluatePr(gh: Gh, pr: PrInfo, cfg: DeliveryConfig): { control: 
   if (author === undefined || "reason" in author) sepReasons.push(`author vendor unknown${author === undefined ? "" : ` (${author.reason})`}`);
   if (approving === undefined) sepReasons.push("no approving review to take the reviewer vendor from");
   else {
-    const declared = REVIEWER_VENDOR.exec(approving.body ?? "")?.[1]?.toLowerCase();
+    const declaredAll = [...(approving.body ?? "").matchAll(REVIEWER_VENDOR_ALL)].map((m) => (m[1] ?? "").toLowerCase());
+    const declared = declaredAll[0];
     if (declared === undefined) sepReasons.push("approving review does not declare a reviewer vendor ('## Second opinion — <vendor>')");
-    else if (author !== undefined && "vendor" in author && declared === author.vendor) {
-      sepReasons.push(`reviewer vendor ${declared} equals author vendor ${author.vendor} (expected ${pickReviewer(author.vendor)})`);
+    else if (declaredAll.some((d) => d !== declared)) sepReasons.push(`approving review declares conflicting reviewer vendors (${[...new Set(declaredAll)].join(", ")})`);
+    else if (author !== undefined && "vendor" in author && declared !== pickReviewer(author.vendor)) {
+      sepReasons.push(`reviewer vendor ${declared} is not the vendor selected for author ${author.vendor} (expected ${pickReviewer(author.vendor)})`);
     }
   }
   out.push({ control: CONTROLS.separation, verdict: verdict(sepReasons, [prRef]) });

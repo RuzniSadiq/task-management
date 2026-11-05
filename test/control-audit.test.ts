@@ -189,7 +189,36 @@ test("reviewer vendor equal to author vendor fails vendor-separation and says wh
   p.reviews = [{ user: { login: "ruzni-reviewer" }, state: "APPROVED", commit_id: p.info.head, body: "## Second opinion — claude\n\nVERDICT: APPROVE" }];
   const a = audit(fakeGh({ prs: [p] }).gh, opts);
   assert.deepEqual(checksFailed(a, 14), ["vendor-separation"]);
-  assert.match(failed(a)[0]?.reasons.join() ?? "", /equals author vendor claude \(expected codex\)/);
+  assert.match(failed(a)[0]?.reasons.join() ?? "", /reviewer vendor claude is not the vendor selected for author claude \(expected codex\)/);
+});
+
+test("a reviewer vendor that differs from the author but is not the selected one fails vendor-separation", () => {
+  const p = goodPr(40);
+  p.reviews = [{ user: { login: "ruzni-reviewer" }, state: "APPROVED", commit_id: p.info.head, body: "## Second opinion — grok\n\nVERDICT: APPROVE" }];
+  const a = audit(fakeGh({ prs: [p] }).gh, opts);
+  assert.deepEqual(checksFailed(a, 40), ["vendor-separation"]);
+  assert.match(failed(a)[0]?.reasons.join() ?? "", /reviewer vendor grok is not the vendor selected for author claude \(expected codex\)/);
+});
+
+test("a codex author must be reviewed by claude; claude passes, codex and grok fail", () => {
+  const verdicts = new Map<string, string[]>();
+  for (const [n, rv] of [[41, "claude"], [42, "codex"], [43, "grok"]] as const) {
+    const p = goodPr(n);
+    p.commits = [{ sha: p.info.head, message: msg("feat: x", "codex") }];
+    p.reviews = [{ user: { login: "ruzni-reviewer" }, state: "APPROVED", commit_id: p.info.head, body: `## Second opinion — ${rv}\n\nVERDICT: APPROVE` }];
+    verdicts.set(rv, checksFailed(audit(fakeGh({ prs: [p] }).gh, opts), n));
+  }
+  assert.deepEqual(verdicts.get("claude"), []);
+  assert.deepEqual(verdicts.get("codex"), ["vendor-separation"]);
+  assert.deepEqual(verdicts.get("grok"), ["vendor-separation"]);
+});
+
+test("an approving review declaring conflicting reviewer vendors fails vendor-separation (fail closed)", () => {
+  const p = goodPr(44);
+  p.reviews = [{ user: { login: "ruzni-reviewer" }, state: "APPROVED", commit_id: p.info.head, body: "## Second opinion — codex\n\nx\n\n## Second opinion — claude\n\nVERDICT: APPROVE" }];
+  const a = audit(fakeGh({ prs: [p] }).gh, opts);
+  assert.deepEqual(checksFailed(a, 44), ["vendor-separation"]);
+  assert.match(failed(a)[0]?.reasons.join() ?? "", /conflicting reviewer vendors/);
 });
 
 test("an approving review that declares no reviewer vendor fails vendor-separation (fail closed)", () => {
