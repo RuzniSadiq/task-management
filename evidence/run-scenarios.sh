@@ -36,6 +36,10 @@ selftest_b() {
 }
 
 WHICH=("$@"); [ ${#WHICH[@]} -eq 0 ] && WHICH=(a b c d)
+# Only a, b, c, d (or `selftest`, handled below) are scenarios; anything else is a usage error, never a silent pass.
+for w in "${WHICH[@]}"; do
+  case "$w" in a|b|c|d|selftest) ;; *) echo "usage: $0 [a] [b] [c] [d] | selftest   (unknown scenario: $w)" >&2; exit 2 ;; esac
+done
 want() { for w in "${WHICH[@]}"; do [ "$w" = "$1" ] && return 0; done; return 1; }
 mkdir -p "$OUT"/{a,b,c,d}
 RESULTS=()
@@ -232,5 +236,6 @@ want a && scenario_a
 want b && scenario_b
 want c && scenario_c
 want d && scenario_d
+[ ${#RESULTS[@]} -gt 0 ] || { echo "no scenario ran" >&2; exit 1; }
 printf '%s\n' "${RESULTS[@]}"
 for r in "${RESULTS[@]}"; do [ "${r#* }" = pass ] || exit 1; done

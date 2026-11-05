@@ -1,7 +1,7 @@
 {
   "schema": "task-management.scenario-evidence/v1",
   "scenario": "C",
-  "recorded_at": "2026-11-05T08:29:10Z",
+  "recorded_at": "2026-11-05T08:36:26Z",
   "repository": "RuzniSadiq/task-management",
   "release": "v0.1.0",
   "violation": "released tarball replaced (one byte appended) after release",

@@ -1,7 +1,7 @@
 {
   "schema": "task-management.scenario-evidence/v1",
   "scenario": "D",
-  "recorded_at": "2026-11-05T08:30:00Z",
+  "recorded_at": "2026-11-05T08:37:16Z",
   "questions": [
     "which agent/vendor acted and who approved",
     "which software or artefact",

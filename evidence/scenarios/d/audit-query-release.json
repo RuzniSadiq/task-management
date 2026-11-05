@@ -94,7 +94,7 @@
   "verification": {
     "reverified": true,
     "result": "pass",
-    "recorded_at": "2026-11-05T08:29:23.391Z",
+    "recorded_at": "2026-11-05T08:36:37.743Z",
     "since_release": true,
     "source": "verify-release-evidence.json"
   },

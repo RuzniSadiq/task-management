@@ -1,4 +1,4 @@
-# 2026-11-05T08:28:51Z commit=79f0ca10135f3a7d67aa57f98bc510c3be1e23ac: verify-release against v0.1.0 with the tarball altered in transit (simulated violation)
+# 2026-11-05T08:36:07Z commit=ea52495d6af55ce42aa1dfc370e14ff4c107969c: verify-release against v0.1.0 with the tarball altered in transit (simulated violation)
 [dry-run] would open or comment: control-finding: release v0.1.0 failed re-verification
 FAIL v0.1.0
   - task-management-0.1.0.tgz: digest mismatch vs SHA256SUMS: expected 7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da, observed 2f966001b2727e73f415342e4edf263e94d8232578f05ed55683a2dd5f266ed4
