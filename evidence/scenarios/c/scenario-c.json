@@ -1,7 +1,7 @@
 {
   "schema": "task-management.scenario-evidence/v1",
   "scenario": "C",
-  "recorded_at": "2026-11-05T08:19:30Z",
+  "recorded_at": "2026-11-05T08:29:10Z",
   "repository": "RuzniSadiq/task-management",
   "release": "v0.1.0",
   "violation": "released tarball replaced (one byte appended) after release",
@@ -23,6 +23,12 @@
   "clean_run": {
     "result": "pass",
     "observed_sha256": "7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da"
+  },
+  "reasons_seen": {
+    "digest_mismatch_sha256sums": true,
+    "digest_mismatch_release_evidence": true,
+    "attestation_failed": true,
+    "digest_differs_from_clean": true
   },
   "result": "pass"
 }

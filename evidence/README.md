@@ -10,7 +10,7 @@ pass/fail summary.
 |---|---|---|
 | `P2-agent-least-privilege.json` | P2 — Agent least privilege (FINOS AIGF MI-18 v3) | [#11](https://github.com/RuzniSadiq/task-management/issues/11) |
 
-| `scenarios/a/scenario-a.json`, `app-demo.txt` | Scenario A: the delivered app works, persists across restart, 325 tests pass; PRs, vendors and reviews that delivered it | [#65](https://github.com/RuzniSadiq/task-management/issues/65) |
+| `scenarios/a/scenario-a.json`, `app-demo.txt` | Scenario A: the delivered app works, persists across restart, the full test suite passes; PRs, vendors and reviews that delivered it | [#65](https://github.com/RuzniSadiq/task-management/issues/65) |
 | `scenarios/b/scenario-b.json` | Scenario B: five controlled failures (canary PRs #6 to #10) and the required check that blocked each | #65 |
 | `scenarios/c/` | Scenario C: `verify-release` detects a tampered v0.1.0 tarball, and passes the untouched release | #65 |
 | `scenarios/d/` | Scenario D: `audit-query` answers for a commit and for v0.1.0 from retained evidence only | #65 |

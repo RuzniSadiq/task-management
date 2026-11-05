@@ -1,7 +1,7 @@
 {
   "schema": "task-management.control-evidence/v1",
   "event": "release.verified",
-  "recorded_at": "2026-11-05T08:19:30.424Z",
+  "recorded_at": "2026-11-05T08:29:10.185Z",
   "repository": "RuzniSadiq/task-management",
   "run": {
     "url": "local run (no GITHUB_RUN_ID)",

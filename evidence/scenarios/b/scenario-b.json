@@ -1,7 +1,7 @@
 {
   "schema": "task-management.scenario-evidence/v1",
   "scenario": "B",
-  "recorded_at": "2026-11-05T08:19:08Z",
+  "recorded_at": "2026-11-05T08:28:51Z",
   "repository": "RuzniSadiq/task-management",
   "rule": "Branch protection on main requires these checks; a PR with a failing required check cannot merge",
   "required_checks": {

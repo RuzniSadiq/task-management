@@ -79,11 +79,14 @@ scenario_a() {
   expect "create task returns 201 with id, title and status todo" 201 '(.id|type=="string") and .title=="Write the demo" and .status=="todo"'
   local ID; ID="$(jq -r .id <<<"$LAST_BODY")"
   call -X POST "localhost:$PORT/tasks" -H 'content-type: application/json' -d '{"title":"Review the plan"}'
-  expect "second create returns 201" 201 '.title=="Review the plan"'
+  expect "second create returns 201 with its own id" 201 '.title=="Review the plan" and .status=="todo" and (.id|type=="string")'
+  local ID2; ID2="$(jq -r .id <<<"$LAST_BODY")"
+  [ "$ID" != "$ID2" ] || ASSERT+=("the two tasks have different ids|false")
   call "localhost:$PORT/tasks"
-  expect "list returns 200 with both tasks in creation order" 200 'length==2 and .[0].title=="Write the demo" and .[1].title=="Review the plan"'
+  expect "list returns 200 with both tasks, by id and title, in creation order" 200 \
+    'length==2 and .[0].id=="'"$ID"'" and .[0].title=="Write the demo" and .[1].id=="'"$ID2"'" and .[1].title=="Review the plan"'
   call -X PATCH "localhost:$PORT/tasks/$ID/status" -H 'content-type: application/json' -d '{"status":"done"}'
-  expect "update status returns 200 with status done" 200 '.id=="'"$ID"'" and .status=="done"'
+  expect "update status returns 200 with status done and the title unchanged" 200 '.id=="'"$ID"'" and .status=="done" and .title=="Write the demo"'
   say "--- error cases"
   call -X POST "localhost:$PORT/tasks" -H 'content-type: application/json' -d '{"title":""}'
   expect "blank title is 400 with an error message" 400 '(.error|type=="string")'
@@ -95,7 +98,8 @@ scenario_a() {
   stop
   if ! start; then ASSERT+=("server restarts|false"); fi
   call "localhost:$PORT/tasks"
-  expect "after restart the list still has both tasks and the updated status" 200 'length==2 and .[0].status=="done"'
+  expect "after restart both tasks persisted: same ids, titles and statuses" 200 \
+    'length==2 and .[0].id=="'"$ID"'" and .[0].title=="Write the demo" and .[0].status=="done" and .[1].id=="'"$ID2"'" and .[1].title=="Review the plan" and .[1].status=="todo"'
   stop
   say "--- automated tests"
   local T; T="$(npm test 2>&1 | grep -E '^# (tests|pass|fail|skipped)')"
@@ -175,7 +179,16 @@ SHIM
       detector_exit:{tampered:$rct,clean:$rcc},
       tampered_run:{result:$t[0].result,reasons:$t[0].releases[0].artefacts[0].reasons,attestation:$t[0].releases[0].artefacts[0].attestation,observed_sha256:$t[0].releases[0].artefacts[0].observed_sha256},
       clean_run:{result:$k[0].result,observed_sha256:$k[0].releases[0].artefacts[0].observed_sha256},
-      result:(if $t[0].result=="fail" and $k[0].result=="pass" and $rct==1 and $rcc==0 then "pass" else "fail" end)}' > "$C/scenario-c.json"
+      reasons_seen:{digest_mismatch_sha256sums:($t[0].releases[0].artefacts[0].reasons|any(test("digest mismatch vs SHA256SUMS"))),
+        digest_mismatch_release_evidence:($t[0].releases[0].artefacts[0].reasons|any(test("digest mismatch vs release-evidence"))),
+        attestation_failed:($t[0].releases[0].artefacts[0].attestation=="fail"),
+        digest_differs_from_clean:($t[0].releases[0].artefacts[0].observed_sha256!=$k[0].releases[0].artefacts[0].observed_sha256)},
+      result:(if $t[0].result=="fail" and $k[0].result=="pass" and $rct==1 and $rcc==0
+                 and ($t[0].releases[0].artefacts[0].reasons|any(test("digest mismatch vs SHA256SUMS")))
+                 and ($t[0].releases[0].artefacts[0].reasons|any(test("digest mismatch vs release-evidence")))
+                 and $t[0].releases[0].artefacts[0].attestation=="fail"
+                 and $t[0].releases[0].artefacts[0].observed_sha256!=$k[0].releases[0].artefacts[0].observed_sha256
+              then "pass" else "fail" end)}' > "$C/scenario-c.json"
   RESULTS+=("C $(jq -r .result "$C/scenario-c.json")")
 }
 
@@ -198,13 +211,19 @@ scenario_d() {
     node scripts/audit-query.ts "$SHA" --evidence "$IN" --json > "$D/audit-query-commit.json" 2>"$D/audit-query-commit.err"; rc1=$?
     node scripts/audit-query.ts "$TAG" --evidence "$IN" --json > "$D/audit-query-release.json" 2>"$D/audit-query-release.err"; rc2=$?
   fi
-  jq -n --arg at "$(NOW)" --arg sha "${SHA:-}" --arg tag "$TAG" --argjson pr "$PRN" --argjson rc1 "$rc1" --argjson rc2 "$rc2" --argjson inputs_ok "$ok" \
+  local answers_ok=false
+  if $ok && jq -e --argjson pr "$PRN" --arg sha "$SHA" '.found==true and .change.pr==$pr and .change.head_sha==$sha and (.change.author|type=="string") and (.change.author_vendor|type=="string")
+        and (.change.merge_sha|type=="string") and (.approval.reviewer|type=="string") and .approval.independent==true and .checks.result=="pass" and (.checks.passed|length)>0' "$D/audit-query-commit.json" >/dev/null 2>&1 \
+     && jq -e --arg tag "$TAG" '.found==true and .release.tag==$tag and (.release.sha256|test("^[0-9a-f]{64}$")) and (.release.approved_by|length)>0 and .verification.result=="pass" and .verification.reverified==true' "$D/audit-query-release.json" >/dev/null 2>&1
+  then answers_ok=true; fi
+  jq -n --arg at "$(NOW)" --arg sha "${SHA:-}" --arg tag "$TAG" --argjson pr "$PRN" --argjson rc1 "$rc1" --argjson rc2 "$rc2" --argjson inputs_ok "$ok" --argjson answers_ok "$answers_ok" \
     '{schema:"task-management.scenario-evidence/v1",scenario:"D",recorded_at:$at,
       questions:["which agent/vendor acted and who approved","which software or artefact","which FINOS control was evaluated","pass, fail or blocked","what evidence supports it"],
       inputs_ok:$inputs_ok,
       commit_query:{sha:$sha,pr:$pr,exit:$rc1,output:"audit-query-commit.json"},
       release_query:{tag:$tag,exit:$rc2,output:"audit-query-release.json"},
-      result:(if $inputs_ok and $rc1==0 and $rc2==0 then "pass" else "fail" end)}' > "$D/scenario-d.json"
+      answers_complete:$answers_ok,
+      result:(if $inputs_ok and $rc1==0 and $rc2==0 and $answers_ok then "pass" else "fail" end)}' > "$D/scenario-d.json"
   RESULTS+=("D $(jq -r .result "$D/scenario-d.json")")
 }
 

@@ -1,9 +1,9 @@
 {
   "schema": "task-management.scenario-evidence/v1",
   "scenario": "A",
-  "recorded_at": "2026-11-05T08:19:03Z",
+  "recorded_at": "2026-11-05T08:28:46Z",
   "repository": "RuzniSadiq/task-management",
-  "commit": "293b19a63f950945faf0facb6a9ba4e5a7726929",
+  "commit": "79f0ca10135f3a7d67aa57f98bc510c3be1e23ac",
   "requirement": "The application must support creating tasks, listing tasks and updating task status. It should persist its data locally and include automated tests.",
   "plan": "https://github.com/RuzniSadiq/task-management/issues/26",
   "delivered_by": [
@@ -80,15 +80,15 @@
       "pass": true
     },
     {
-      "name": "second create returns 201",
+      "name": "second create returns 201 with its own id",
       "pass": true
     },
     {
-      "name": "list returns 200 with both tasks in creation order",
+      "name": "list returns 200 with both tasks, by id and title, in creation order",
       "pass": true
     },
     {
-      "name": "update status returns 200 with status done",
+      "name": "update status returns 200 with status done and the title unchanged",
       "pass": true
     },
     {
@@ -104,7 +104,7 @@
       "pass": true
     },
     {
-      "name": "after restart the list still has both tasks and the updated status",
+      "name": "after restart both tasks persisted: same ids, titles and statuses",
       "pass": true
     }
   ],
