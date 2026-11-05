@@ -1,11 +1,15 @@
 {
   "schema": "task-management.scenario-evidence/v1",
   "scenario": "C",
-  "recorded_at": "2026-11-05T08:01:11Z",
+  "recorded_at": "2026-11-05T08:13:14Z",
   "repository": "RuzniSadiq/task-management",
   "release": "v0.1.0",
   "violation": "released tarball replaced (one byte appended) after release",
   "detector": "scripts/verify-release.ts (SDLC-PREV-003, SDLC-PREV-002)",
+  "detector_exit": {
+    "tampered": 1,
+    "clean": 0
+  },
   "tampered_run": {
     "result": "fail",
     "reasons": [

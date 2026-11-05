@@ -30,7 +30,7 @@
   "verification": {
     "reverified": true,
     "result": "pass",
-    "recorded_at": "2026-11-05T08:01:22.593Z",
+    "recorded_at": "2026-11-05T08:13:26.145Z",
     "since_release": true,
     "source": "verify-release-evidence.json"
   },

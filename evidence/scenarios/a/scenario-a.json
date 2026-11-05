@@ -1,9 +1,9 @@
 {
   "schema": "task-management.scenario-evidence/v1",
   "scenario": "A",
-  "recorded_at": "2026-11-05T08:00:45Z",
+  "recorded_at": "2026-11-05T08:14:33Z",
   "repository": "RuzniSadiq/task-management",
-  "commit": "a512b9591e2ae0a22340a7894dd2da5cc05404f7",
+  "commit": "23ba2edfb0e143739428a5fbd375dc9f5d68a3db",
   "requirement": "The application must support creating tasks, listing tasks and updating task status. It should persist its data locally and include automated tests.",
   "plan": "https://github.com/RuzniSadiq/task-management/issues/26",
   "delivered_by": [

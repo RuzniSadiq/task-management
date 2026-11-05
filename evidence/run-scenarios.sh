@@ -30,11 +30,21 @@ scenario_a() {
   call() { say "\$ curl $*"; LAST_CODE="$(curl -s -o "$TMP/body" -w '%{http_code}' "$@")"; LAST_BODY="$(cat "$TMP/body")"; say "$LAST_BODY [HTTP $LAST_CODE]"; }
   # expect <name> <status> <jq expression that must be true of the response body>
   expect() { local ok=false; [ "$LAST_CODE" = "$2" ] && jq -e "$3" >/dev/null 2>&1 <<<"$LAST_BODY" && ok=true; ASSERT+=("$1|$ok"); }
+  # Ready when the server answers; gives up after ~10s or as soon as the process has died, with its log.
   start() { TASKS_FILE="$TMP/tasks.json" PORT=$PORT node src/server.ts >"$TMP/server.log" 2>&1 & echo $! > "$TMP/pid"
-            until curl -s "localhost:$PORT/tasks" >/dev/null 2>&1; do :; done; }
+            local i; for i in $(seq 1 100); do
+              # our own process must be alive and have announced the port, so another listener cannot pass for it
+              kill -0 "$(cat "$TMP/pid")" 2>/dev/null || break
+              grep -q "listening on" "$TMP/server.log" 2>/dev/null && curl -s -o /dev/null "localhost:$PORT/tasks" 2>/dev/null && return 0
+              sleep 0.1
+            done
+            say "server did not start on port $PORT; its log:"; cat "$TMP/server.log" >> "$LOG"; return 1; }
   stop() { kill "$(cat "$TMP/pid")" 2>/dev/null; wait "$(cat "$TMP/pid")" 2>/dev/null; }
   say "# Scenario A demo $(NOW) commit=$HEAD_SHA node=$(node -v)"
-  start
+  if ! start; then
+    jq -n --arg at "$(NOW)" '{schema:"task-management.scenario-evidence/v1",scenario:"A",recorded_at:$at,error:"server did not start; see app-demo.txt",result:"fail"}' > "$A/scenario-a.json"
+    stop; rm -rf "$TMP"; RESULTS+=("A fail"); return
+  fi
   call -X POST "localhost:$PORT/tasks" -H 'content-type: application/json' -d '{"title":"Write the demo"}'
   expect "create task returns 201 with id, title and status todo" 201 '(.id|type=="string") and .title=="Write the demo" and .status=="todo"'
   local ID; ID="$(jq -r .id <<<"$LAST_BODY")"
@@ -52,7 +62,8 @@ scenario_a() {
   call -X DELETE "localhost:$PORT/tasks"
   expect "wrong method is 405 with an error message" 405 '(.error|type=="string")'
   say "--- restart the server and list again (persistence)"
-  stop; start
+  stop
+  if ! start; then ASSERT+=("server restarts|false"); fi
   call "localhost:$PORT/tasks"
   expect "after restart the list still has both tasks and the updated status" 200 'length==2 and .[0].status=="done"'
   stop
@@ -93,10 +104,12 @@ scenario_b() {
   for pair in '6:[]' '7:["test-integrity"]' '8:["gate","test-integrity"]' '9:["gate"]' '10:["DCO"]'; do
     n="${pair%%:*}"; exp="${pair#*:}"
     C="$(jq --argjson p "$(gh pr view "$n" --repo "$REPO" --json number,title,url,state,headRefOid,statusCheckRollup |
-      jq --argjson exp "$exp" '{pr:.number,url,title,head:.headRefOid,state,expected_failing_checks:($exp|sort),
-        checks:[.statusCheckRollup[]|select(.name|IN("gate","test-integrity","DCO","security-fast"))|{name,conclusion}]}
+      jq --argjson exp "$exp" --argjson want "$WANT" '{pr:.number,url,title,head:.headRefOid,state,expected_failing_checks:($exp|sort),
+        checks:[.statusCheckRollup[]|select(.name|IN($want[]))|{name,status,conclusion}]}
+        # every required check must be present with a completed, non-empty conclusion before failures are compared
+        | . + {incomplete_or_missing:($want - [.checks[]|select(.status=="COMPLETED" and ((.conclusion//"")|length)>0)|.name])}
         | . + {failed_checks:([.checks[]|select(.conclusion=="FAILURE")|.name]|sort)}
-        | . + {result:(if .failed_checks==.expected_failing_checks and .state!="MERGED" then "pass" else "fail" end)}')" '. + [$p]' <<<"$C")"
+        | . + {result:(if .incomplete_or_missing==[] and .failed_checks==.expected_failing_checks and .state!="MERGED" then "pass" else "fail" end)}')" '. + [$p]' <<<"$C")"
   done
   jq -n --arg at "$(NOW)" --arg repo "$REPO" --argjson req "$REQ" --argjson reqok "$REQ_OK" --argjson want "$WANT" --argjson c "$C" \
     '{schema:"task-management.scenario-evidence/v1",scenario:"B",recorded_at:$at,repository:$repo,
@@ -120,22 +133,24 @@ if [ "\$1" = api ] && [ "\$2" = -H ] && [[ "\$4" == */releases/assets/$ID ]]; th
 exec "$REAL" "\$@"
 SHIM
   chmod +x "$TMP/gh"
+  local rc_t rc_c
   { echo "# $(NOW) commit=$HEAD_SHA: verify-release against $TAG with the tarball altered in transit (simulated violation)"
-    PATH="$TMP:$PATH" node scripts/verify-release.ts --repo "$REPO" --dry-run --out "$C/verify-release-evidence.tampered.json"; echo "exit=$?"
+    PATH="$TMP:$PATH" node scripts/verify-release.ts --repo "$REPO" --dry-run --out "$C/verify-release-evidence.tampered.json"; rc_t=$?; echo "exit=$rc_t"
     echo "# control run: same detector, untouched release"
-    node scripts/verify-release.ts --repo "$REPO" --dry-run --out "$C/verify-release-evidence.clean.json"; echo "exit=$?"
+    node scripts/verify-release.ts --repo "$REPO" --dry-run --out "$C/verify-release-evidence.clean.json"; rc_c=$?; echo "exit=$rc_c"
   } > "$C/detector-output.txt" 2>&1
   rm -rf "$TMP"
   [ -s "$C/verify-release-evidence.tampered.json" ] && [ -s "$C/verify-release-evidence.clean.json" ] \
     || { echo "scenario C: detector wrote no evidence" >&2; RESULTS+=("C fail"); return; }
-  jq -n --arg at "$(NOW)" --arg repo "$REPO" --arg tag "$TAG" \
+  jq -n --arg at "$(NOW)" --arg repo "$REPO" --arg tag "$TAG" --argjson rct "$rc_t" --argjson rcc "$rc_c" \
         --slurpfile t "$C/verify-release-evidence.tampered.json" --slurpfile k "$C/verify-release-evidence.clean.json" \
     '{schema:"task-management.scenario-evidence/v1",scenario:"C",recorded_at:$at,repository:$repo,release:$tag,
       violation:"released tarball replaced (one byte appended) after release",
       detector:"scripts/verify-release.ts (SDLC-PREV-003, SDLC-PREV-002)",
+      detector_exit:{tampered:$rct,clean:$rcc},
       tampered_run:{result:$t[0].result,reasons:$t[0].releases[0].artefacts[0].reasons,attestation:$t[0].releases[0].artefacts[0].attestation,observed_sha256:$t[0].releases[0].artefacts[0].observed_sha256},
       clean_run:{result:$k[0].result,observed_sha256:$k[0].releases[0].artefacts[0].observed_sha256},
-      result:(if $t[0].result=="fail" and $k[0].result=="pass" then "pass" else "fail" end)}' > "$C/scenario-c.json"
+      result:(if $t[0].result=="fail" and $k[0].result=="pass" and $rct==1 and $rcc==0 then "pass" else "fail" end)}' > "$C/scenario-c.json"
   RESULTS+=("C $(jq -r .result "$C/scenario-c.json")")
 }
 

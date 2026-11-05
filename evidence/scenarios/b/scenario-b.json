@@ -1,7 +1,7 @@
 {
   "schema": "task-management.scenario-evidence/v1",
   "scenario": "B",
-  "recorded_at": "2026-11-05T08:00:50Z",
+  "recorded_at": "2026-11-05T08:12:55Z",
   "repository": "RuzniSadiq/task-management",
   "rule": "Branch protection on main requires these checks; a PR with a failing required check cannot merge",
   "required_checks": {
@@ -30,21 +30,26 @@
       "checks": [
         {
           "name": "DCO",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         },
         {
           "name": "gate",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         },
         {
           "name": "security-fast",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         },
         {
           "name": "test-integrity",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         }
       ],
+      "incomplete_or_missing": [],
       "failed_checks": [],
       "result": "pass"
     },
@@ -60,21 +65,26 @@
       "checks": [
         {
           "name": "DCO",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         },
         {
           "name": "gate",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         },
         {
           "name": "security-fast",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         },
         {
           "name": "test-integrity",
+          "status": "COMPLETED",
           "conclusion": "FAILURE"
         }
       ],
+      "incomplete_or_missing": [],
       "failed_checks": [
         "test-integrity"
       ],
@@ -93,21 +103,26 @@
       "checks": [
         {
           "name": "gate",
+          "status": "COMPLETED",
           "conclusion": "FAILURE"
         },
         {
           "name": "DCO",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         },
         {
           "name": "security-fast",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         },
         {
           "name": "test-integrity",
+          "status": "COMPLETED",
           "conclusion": "FAILURE"
         }
       ],
+      "incomplete_or_missing": [],
       "failed_checks": [
         "gate",
         "test-integrity"
@@ -126,21 +141,26 @@
       "checks": [
         {
           "name": "gate",
+          "status": "COMPLETED",
           "conclusion": "FAILURE"
         },
         {
           "name": "DCO",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         },
         {
           "name": "security-fast",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         },
         {
           "name": "test-integrity",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         }
       ],
+      "incomplete_or_missing": [],
       "failed_checks": [
         "gate"
       ],
@@ -158,21 +178,26 @@
       "checks": [
         {
           "name": "DCO",
+          "status": "COMPLETED",
           "conclusion": "FAILURE"
         },
         {
           "name": "gate",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         },
         {
           "name": "security-fast",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         },
         {
           "name": "test-integrity",
+          "status": "COMPLETED",
           "conclusion": "SUCCESS"
         }
       ],
+      "incomplete_or_missing": [],
       "failed_checks": [
         "DCO"
       ],

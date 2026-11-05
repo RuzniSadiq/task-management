@@ -69,13 +69,13 @@ Needs node >= 22.18, `gh` (authenticated, read access), `jq` and `curl`. It writ
   reviews that delivered it.
 - **B** reads GitHub's recorded check results for the canary PRs (#6 clean, #7 deleted test, #8 skipped
   test, #9 failing assertion, #10 unsigned commit). Each must have failed exactly its expected set of required checks (no more, no fewer; #8 trips both
-  `gate` and `test-integrity`) and none may have merged. Scenario B fails if the live required checks of `main`
+  `gate` and `test-integrity`) and none may have merged. Every required check must be present with a completed conclusion first. Scenario B fails if the live required checks of `main`
   cannot be read or differ from `.gibson-delivery.json`.
   The agent-privilege proofs (refused direct push, refused token, repo-boundary guard) are
   `P2-agent-least-privilege.json`.
 - **C** runs the real `scripts/verify-release.ts` against the real v0.1.0 release and its attestation. A
   `gh` shim appends one byte to the tarball as it is downloaded, simulating a replaced artefact; the
-  detector must fail on the digest mismatches and the attestation. The same detector then passes the
+  detector must fail on the digest mismatches and the attestation, and exit 1 (0 for the untouched release). The same detector then passes the
   untouched release. `--dry-run` means the `control-finding` issue is printed, not opened.
 - **D** feeds the release record, a fresh `verify-release` record and the `control-audit` JSONL to
   `scripts/audit-query.ts`, which reads only those files, for one commit (PR #62's head) and for the tag.
