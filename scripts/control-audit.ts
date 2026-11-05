@@ -25,8 +25,13 @@
 // on later runs, so repeat runs never duplicate or spam. A failure to read anything is a failed
 // control with the reason, never a silent pass.
 //
-// FINOS controls (ids as cited by issue #41): SDLC-SEC-008, RC-005, AIGF MI-21 (audit trail),
-// AIGF MI-4 (agent accountability).
+// FINOS mitigations checked (ids and versions verified against finos-labs/SDLC-Controls-Framework):
+//   SDLC-PREV-001 Code Review (v1.0)                      independent approval at the head; reviewer vendor differs
+//   SDLC-PREV-008 Version Control (v1.2)                  merged via PR, DCO sign-off, protection, no direct push
+//   SDLC-PREV-012 Deployment Gating (v0.2)                required checks green at the head
+//   SDLC-PREV-023 Agentic Processes Provenance (v0.2)     every commit declares exactly one Agent-Vendor
+// The risks they address (SDLC-SEC-008 Unauthorised Change, SDLC-RC-005 Audit and Compliance Evidence Failure)
+// and the AI Governance Framework's detective controls (MI-4, MI-21) are mapped in controls.json / CONTROLS.md.
 //
 // Usage (needs GH_TOKEN with contents:read, pull-requests:read, issues:write; reading branch
 // protection needs administration:read, so give the workflow a CONTROL_AUDIT_TOKEN secret):
@@ -88,17 +93,16 @@ export interface Run { url: string; attempt: string }
 
 export interface Control { id: string; catalog: string; version: string; check: string; name: string }
 const SDLC = "FINOS SDLC Common Controls";
-const AIGF = "FINOS AI Governance Framework";
-const control = (id: string, catalog: string, check: string, name: string): Control => ({ id, catalog, version: "1", check, name });
+const control = (id: string, catalog: string, version: string, check: string, name: string): Control => ({ id, catalog, version, check, name });
 export const CONTROLS = {
-  viaPr: control("SDLC-SEC-008", SDLC, "merged-via-pr", "Changes reach main through a pull request"),
-  approval: control("SDLC-SEC-008", SDLC, "independent-approval-at-head", "Independent approval at the exact head SHA"),
-  checks: control("RC-005", SDLC, "required-checks-green", "Required checks green at the head"),
-  dco: control("MI-21", AIGF, "dco-signoff", "Every commit is signed off (audit trail)"),
-  trailer: control("MI-4", AIGF, "agent-vendor-trailer", "Every commit declares exactly one Agent-Vendor"),
-  separation: control("MI-4", AIGF, "vendor-separation", "Reviewer vendor differs from author vendor"),
-  protection: control("SDLC-SEC-008", SDLC, "branch-protection", "Live branch protection equals the declared policy"),
-  directPush: control("SDLC-SEC-008", SDLC, "no-direct-push", "No commit reaches main without a merged pull request"),
+  viaPr: control("SDLC-PREV-008", SDLC, "1.2", "merged-via-pr", "Changes reach main through a pull request"),
+  approval: control("SDLC-PREV-001", SDLC, "1.0", "independent-approval-at-head", "Independent approval at the exact head SHA"),
+  checks: control("SDLC-PREV-012", SDLC, "0.2", "required-checks-green", "Required checks green at the head"),
+  dco: control("SDLC-PREV-008", SDLC, "1.2", "dco-signoff", "Every commit is signed off (audit trail)"),
+  trailer: control("SDLC-PREV-023", SDLC, "0.2", "agent-vendor-trailer", "Every commit declares exactly one Agent-Vendor"),
+  separation: control("SDLC-PREV-001", SDLC, "1.0", "vendor-separation", "Reviewer vendor differs from author vendor"),
+  protection: control("SDLC-PREV-008", SDLC, "1.2", "branch-protection", "Live branch protection equals the declared policy"),
+  directPush: control("SDLC-PREV-008", SDLC, "1.2", "no-direct-push", "No commit reaches main without a merged pull request"),
 } as const;
 
 /** A reviewed exception for one failed check of one merged PR at one exact head SHA. */

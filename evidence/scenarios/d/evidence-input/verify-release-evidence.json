@@ -1,7 +1,7 @@
 {
   "schema": "task-management.control-evidence/v1",
   "event": "release.verified",
-  "recorded_at": "2026-11-05T08:36:37.743Z",
+  "recorded_at": "2026-11-05T08:53:17.355Z",
   "repository": "RuzniSadiq/task-management",
   "run": {
     "url": "local run (no GITHUB_RUN_ID)",
@@ -47,8 +47,9 @@
       "evidence": "releases[].artefacts[].observed_sha256"
     },
     {
-      "id": "OP-007",
-      "name": "Monitoring",
+      "id": "release-monitoring",
+      "catalog": "task-management (local, not a FINOS control)",
+      "name": "Release re-verification monitoring",
       "result": "pass",
       "evidence": "findings"
     }

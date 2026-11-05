@@ -101,3 +101,11 @@ _Last updated: 2026-11-03_
 - **Root cause:** `release-claim.sh` is cleanup to run after the merge, not a merge step. Nothing in the order of steps stops anyone from running it on an open PR. The loop-state `hat` field was also set by hand to "release done" without anything confirming MERGED.
 - **Fix / rule:** Run `release-claim.sh` only after `gh pr view <N> --json state` returns `MERGED`. Never run it on an OPEN PR. Every hat that follows release (historian included) first checks `gh pr view <N> --json state,mergeCommit`, and if it is not MERGED, sends the loop back to `release` rather than starting new work. Never write `hat: release` into loop-state unless a release journal entry names the merge commit. Harness follow-up (owner decision, kept local to the Gibson pin): have `release-claim.sh` refuse an OPEN PR unless `--abandon` is passed.
 - **Links:** PR #32 (closed), PR #34, issue #28
+
+## 2026-11-05 — assessment-review-lessons
+
+- **What happened:** Six review rounds on one evidence-script PR (#66), each finding a new fail-open pass condition; a `gh run rerun --failed` on a PR broke `test-integrity` (the base artifact belongs to attempt 1); FINOS ids and versions cited in code (MI-4, MI-21, RC-005, OP-007, version "1") did not match the catalogues.
+- **Root cause:** Fixing only the cited line instead of sweeping the whole defect class; trusting ids from an issue text instead of the catalogue source; re-running only the failed job of a multi-job artifact pipeline.
+- **Fix / rule:** Before review, list every pass condition in a verifier and make each assert content (ids, statuses, exit codes, completeness), not just presence or one failing value. Verify any FINOS id and version against the source repos (finos-labs/SDLC-Controls-Framework, finos/ai-governance-framework) and let a test compare emitted ids to `controls.json`. Re-run the whole workflow, or push an empty signed commit, never `rerun --failed` on a PR with test-integrity.
+- **Links:** PR #66, PR #71, issue #64
+

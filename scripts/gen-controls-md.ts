@@ -20,12 +20,10 @@ export interface Control {
   verify: string[];
   evidence: string[];
 }
-export interface LabelNote { label: string; used_in: string; note: string }
 export interface Registry {
   schema: string;
   frameworks: Record<"sdlc" | "aigf", { name: string; version?: string; source: string; note?: string }>;
   controls: Control[];
-  label_notes: LabelNote[];
 }
 
 export const REGISTRY_SCHEMA = "task-management.controls/v1";
@@ -81,16 +79,6 @@ export function render(reg: Registry): string {
       "",
     );
   }
-  out.push(
-    "## Labels in the code that do not match the FINOS catalogue",
-    "",
-    "These ids or labels appear in workflows and scripts but do not describe the FINOS control of that id. They are listed so the discrepancy is visible; the registry above uses the verified references.",
-    "",
-    "| Label | Used in | Note |",
-    "|---|---|---|",
-    ...reg.label_notes.map((n) => `| ${n.label} | ${cell(n.used_in)} | ${cell(n.note)} |`),
-    "",
-  );
   return out.join("\n");
 }
 

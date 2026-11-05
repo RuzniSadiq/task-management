@@ -479,7 +479,7 @@ test("the finding body carries the run URL, control id, check name, reasons and 
   const f = fakeGh({ prs: [goodPr(49, { reviews: [] })] });
   audit(f.gh, opts);
   const body = f.created[0]?.body ?? "";
-  for (const s of [run.url, "SDLC-SEC-008", "independent-approval-at-head", "no verdict by ruzni-reviewer", "https://github.com/o/r/pull/49"]) assert.ok(body.includes(s), s);
+  for (const s of [run.url, "SDLC-PREV-001", "independent-approval-at-head", "no verdict by ruzni-reviewer", "https://github.com/o/r/pull/49"]) assert.ok(body.includes(s), s);
 });
 
 test("several failing controls on one PR share one finding, refreshed with all of them", () => {
@@ -496,7 +496,7 @@ test("evidence: one record per PR per control; ids are the cited catalogue ids; 
   for (const r of a.records) if (r.subject.pr !== undefined) perPr.set(r.subject.pr, [...(perPr.get(r.subject.pr) ?? []), r.control.check]);
   for (const checks of perPr.values()) assert.equal(new Set(checks).size, checks.length, "no control twice for a PR");
   assert.deepEqual([...perPr.keys()], [51, 52]);
-  assert.deepEqual([...new Set(a.records.map((r) => r.control.id))].sort(), ["MI-21", "MI-4", "RC-005", "SDLC-SEC-008"]);
+  assert.deepEqual([...new Set(a.records.map((r) => r.control.id))].sort(), ["SDLC-PREV-001", "SDLC-PREV-008", "SDLC-PREV-012", "SDLC-PREV-023"]);
   assert.ok(a.records.every((r) => r.recorded_at === "2026-11-05T00:00:00.000Z" && r.run === run));
 });
 

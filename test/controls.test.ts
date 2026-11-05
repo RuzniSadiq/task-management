@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseRegistry, render } from "../scripts/gen-controls-md.ts";
 import type { Registry } from "../scripts/gen-controls-md.ts";
+import { CONTROLS as AUDIT_CONTROLS } from "../scripts/control-audit.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const read = (p: string): string => readFileSync(join(root, p), "utf8");
@@ -52,8 +53,8 @@ function referencedIds(): Map<string, string[]> {
   return found;
 }
 
-test("every control id referenced in workflows and scripts is in the registry or listed as a known mislabel", () => {
-  const known = new Set([...reg.controls.flatMap((c) => c.finos.map((r) => r.id)), ...reg.label_notes.map((n) => n.label)]);
+test("every control id referenced in workflows and scripts is in the registry", () => {
+  const known = new Set(reg.controls.flatMap((c) => c.finos.map((r) => r.id)));
   const found = referencedIds();
   assert.ok(found.size > 0, "the scan found no ids, so it is broken");
   for (const [id, files] of found) assert.ok(known.has(id), `${id} (in ${[...new Set(files)].join(", ")}) is not in controls.json`);
@@ -72,4 +73,13 @@ test("CONTROLS.md is generated from controls.json and is not stale", () => {
 test("gen-controls-md --check exits 0 when current", () => {
   const r = spawnSync(process.execPath, [join(root, "scripts/gen-controls-md.ts"), "--check"], { cwd: root, encoding: "utf8" });
   assert.equal(r.status, 0, r.stdout + r.stderr);
+});
+
+test("every control id and version control-audit writes into evidence matches a verified registry entry", () => {
+  const refs = new Map(reg.controls.flatMap((c) => c.finos.map((r) => [`${r.id}@${r.version}`, r] as const)));
+  for (const c of Object.values(AUDIT_CONTROLS)) assert.ok(refs.has(`${c.id}@${c.version}`), `${c.check}: ${c.id} v${c.version} is not in controls.json`);
+});
+
+test("no workflow or script cites a label that is not a FINOS id (OP-007 and similar)", () => {
+  assert.ok(!referencedIds().has("OP-007"));
 });

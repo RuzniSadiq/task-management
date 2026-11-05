@@ -97,9 +97,11 @@ findings are `control-finding` issues.
   reviewer, merge commit and check conclusions for each merged PR (the `actors` object). It does not record
   the model version or the agent run id, and evidence written before that field existed reports those
   facts as unavailable rather than guessing.
-- **FINOS labels.** The FINOS catalogues are pre-alpha. Several labels in the code do not match the catalogue
-  entry of the same id; they are listed in `CONTROLS.md` and tracked in
-  [#64](https://github.com/RuzniSadiq/task-management/issues/64).
+- **FINOS mapping is our judgement.** The FINOS catalogues are pre-alpha. Every id, title and version in
+  `controls.json` and in the evidence was checked against the catalogues' source repositories, and a test
+  fails if `control-audit` cites an id or version that is not in the registry. Which mitigation a check
+  evidences (for example, DCO sign-off under SDLC-PREV-008 Version Control) is our reading of the catalogue.
+  The monitoring result of `verify-release` carries a local label, `release-monitoring`, not a FINOS id.
 - **The Gibson is patched locally** (one fix to the repo-boundary guard's push handling); the runner needs a
   supervisor to run `claim.sh` and `release-claim.sh`.
 - 11 moderate `npm audit` advisories in the lint toolchain are tracked in
@@ -117,8 +119,8 @@ findings are `control-finding` issues.
   CODEOWNERS and organisation rulesets; require two approvers for waivers.
 - Pin verification to workflow identity, tag and commit; add SBOM, dependency and SAST scanning as
   required checks; resolve the npm advisories.
-- Add per-agent identity to every action (agent id, model, run id) in the evidence, and correct the FINOS
-  labels so audit records cite the right catalogue entries.
+- Add per-agent identity to every action (agent id, model, run id) in the evidence, and have the FINOS
+  working groups confirm the check-to-mitigation mapping.
 - Replace the JSON file with a real database, and add authentication.
 
 ## Requirements

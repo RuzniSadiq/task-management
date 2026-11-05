@@ -77,7 +77,7 @@ test("clean pass: digests match both records, attestation verifies, no finding",
   assert.deepEqual(e.findings, []);
   assert.equal(f.created.length + f.comments.length + f.labelEnsured(), 0);
   assert.deepEqual(f.attestCalls, [TARBALL]);
-  assert.deepEqual(e.controls.map((c) => [c.id, c.result]), [["SDLC-PREV-003", "pass"], ["SDLC-PREV-002", "pass"], ["OP-007", "pass"]]);
+  assert.deepEqual(e.controls.map((c) => [c.id, c.result]), [["SDLC-PREV-003", "pass"], ["SDLC-PREV-002", "pass"], ["release-monitoring", "pass"]]);
   assert.equal(e.run.url, run.url);
 });
 
@@ -327,7 +327,7 @@ test("B2: createIssue throwing still returns the failed release, its digests and
     { tag: "v0.2.0", issue: null, action: "error", error: "could not open the finding: gh issue create failed (1): HTTP 502" },
     { tag: "v0.1.0", issue: 100, action: "opened" },
   ]);
-  assert.equal(control(e, "OP-007"), "fail");
+  assert.equal(control(e, "release-monitoring"), "fail");
 });
 
 test("B2: comment throwing on an existing finding is recorded, not thrown", () => {
@@ -682,7 +682,7 @@ test("#46 a published release with zero assets fails, with a finding and the rea
   assert.equal(r?.result, "fail");
   assert.ok(r.reasons.includes("release serves no artefact besides its records"));
   assert.deepEqual(f.created.map((c) => c.title), [findingTitle("v0.1.0")]);
-  assert.equal(control(e, "OP-007"), "fail");
+  assert.equal(control(e, "release-monitoring"), "fail");
 });
 
 test("#46 a draft with zero assets is still only skipped", () => {
