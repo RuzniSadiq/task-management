@@ -1,0 +1,66 @@
+{
+  "schema": "task-management.control-evidence/v1",
+  "event": "release.verified",
+  "recorded_at": "2026-11-05T08:36:16.063Z",
+  "repository": "RuzniSadiq/task-management",
+  "run": {
+    "url": "local run (no GITHUB_RUN_ID)",
+    "attempt": "1"
+  },
+  "result": "fail",
+  "releases": [
+    {
+      "tag": "v0.1.0",
+      "url": "https://github.com/RuzniSadiq/task-management/releases/tag/v0.1.0",
+      "result": "fail",
+      "artefacts": [
+        {
+          "name": "task-management-0.1.0.tgz",
+          "result": "fail",
+          "observed_sha256": "2f966001b2727e73f415342e4edf263e94d8232578f05ed55683a2dd5f266ed4",
+          "expected_sha256": {
+            "sha256sums": "7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da",
+            "release_evidence": "7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da"
+          },
+          "attestation": "fail",
+          "reasons": [
+            "digest mismatch vs SHA256SUMS: expected 7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da, observed 2f966001b2727e73f415342e4edf263e94d8232578f05ed55683a2dd5f266ed4",
+            "digest mismatch vs release-evidence.json: expected 7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da, observed 2f966001b2727e73f415342e4edf263e94d8232578f05ed55683a2dd5f266ed4",
+            "attestation verify failed for task-management-0.1.0.tgz: Error: HTTP 404: Not Found (https://api.github.com/repos/RuzniSadiq/task-management/attestations/sha256:2f966001b2727e73f415342e4edf263e94d8232578f05ed55683a2dd5f266ed4?per_page=30&predicate_type=https%3A%2F%2Fslsa.dev%2Fprovenance%2Fv1)"
+          ]
+        }
+      ],
+      "reasons": []
+    }
+  ],
+  "skipped": [],
+  "findings": [
+    {
+      "tag": "v0.1.0",
+      "issue": 0,
+      "action": "opened"
+    }
+  ],
+  "controls": [
+    {
+      "id": "SDLC-PREV-003",
+      "catalog": "FINOS SDLC Common Controls",
+      "name": "Software Artifact Provenance",
+      "result": "fail",
+      "evidence": "releases[].artefacts[].attestation"
+    },
+    {
+      "id": "SDLC-PREV-002",
+      "catalog": "FINOS SDLC Common Controls",
+      "name": "Content Addressable Identities",
+      "result": "fail",
+      "evidence": "releases[].artefacts[].observed_sha256"
+    },
+    {
+      "id": "OP-007",
+      "name": "Monitoring",
+      "result": "fail",
+      "evidence": "findings"
+    }
+  ]
+}

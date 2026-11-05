@@ -1,0 +1,34 @@
+{
+  "schema": "task-management.scenario-evidence/v1",
+  "scenario": "C",
+  "recorded_at": "2026-11-05T08:36:26Z",
+  "repository": "RuzniSadiq/task-management",
+  "release": "v0.1.0",
+  "violation": "released tarball replaced (one byte appended) after release",
+  "detector": "scripts/verify-release.ts (SDLC-PREV-003, SDLC-PREV-002)",
+  "detector_exit": {
+    "tampered": 1,
+    "clean": 0
+  },
+  "tampered_run": {
+    "result": "fail",
+    "reasons": [
+      "digest mismatch vs SHA256SUMS: expected 7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da, observed 2f966001b2727e73f415342e4edf263e94d8232578f05ed55683a2dd5f266ed4",
+      "digest mismatch vs release-evidence.json: expected 7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da, observed 2f966001b2727e73f415342e4edf263e94d8232578f05ed55683a2dd5f266ed4",
+      "attestation verify failed for task-management-0.1.0.tgz: Error: HTTP 404: Not Found (https://api.github.com/repos/RuzniSadiq/task-management/attestations/sha256:2f966001b2727e73f415342e4edf263e94d8232578f05ed55683a2dd5f266ed4?per_page=30&predicate_type=https%3A%2F%2Fslsa.dev%2Fprovenance%2Fv1)"
+    ],
+    "attestation": "fail",
+    "observed_sha256": "2f966001b2727e73f415342e4edf263e94d8232578f05ed55683a2dd5f266ed4"
+  },
+  "clean_run": {
+    "result": "pass",
+    "observed_sha256": "7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da"
+  },
+  "reasons_seen": {
+    "digest_mismatch_sha256sums": true,
+    "digest_mismatch_release_evidence": true,
+    "attestation_failed": true,
+    "digest_differs_from_clean": true
+  },
+  "result": "pass"
+}

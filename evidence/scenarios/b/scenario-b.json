@@ -1,0 +1,230 @@
+{
+  "schema": "task-management.scenario-evidence/v1",
+  "scenario": "B",
+  "recorded_at": "2026-11-05T08:37:42Z",
+  "repository": "RuzniSadiq/task-management",
+  "rule": "Branch protection on main requires these checks; a PR with a failing required check cannot merge",
+  "required_checks": {
+    "live": [
+      "gate",
+      "security-fast",
+      "test-integrity",
+      "DCO"
+    ],
+    "declared": [
+      "DCO",
+      "gate",
+      "security-fast",
+      "test-integrity"
+    ],
+    "match": true
+  },
+  "controlled_failures": [
+    {
+      "pr": 6,
+      "url": "https://github.com/RuzniSadiq/task-management/pull/6",
+      "title": "canary 1 (DO NOT MERGE): no change — all checks should pass",
+      "head": "13318062fbbd93b75f4c440b9ee10bc3566a0650",
+      "state": "CLOSED",
+      "expected_failing_checks": [],
+      "checks": [
+        {
+          "name": "DCO",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "gate",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "security-fast",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "test-integrity",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "incomplete_or_missing": [],
+      "not_success": [],
+      "unexpected_conclusions": [],
+      "failed_checks": [],
+      "result": "pass"
+    },
+    {
+      "pr": 7,
+      "url": "https://github.com/RuzniSadiq/task-management/pull/7",
+      "title": "canary 2 (DO NOT MERGE): deleted test — test-integrity should fail",
+      "head": "05483405f424c1b027c2963ce3c11c8df004af33",
+      "state": "CLOSED",
+      "expected_failing_checks": [
+        "test-integrity"
+      ],
+      "checks": [
+        {
+          "name": "DCO",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "gate",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "security-fast",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "test-integrity",
+          "status": "COMPLETED",
+          "conclusion": "FAILURE"
+        }
+      ],
+      "incomplete_or_missing": [],
+      "not_success": [
+        "test-integrity"
+      ],
+      "unexpected_conclusions": [],
+      "failed_checks": [
+        "test-integrity"
+      ],
+      "result": "pass"
+    },
+    {
+      "pr": 8,
+      "url": "https://github.com/RuzniSadiq/task-management/pull/8",
+      "title": "canary 3 (DO NOT MERGE): skipped test — test-integrity should fail",
+      "head": "84ec0a8ebad7b80085a83678eada4ab007bcd162",
+      "state": "CLOSED",
+      "expected_failing_checks": [
+        "gate",
+        "test-integrity"
+      ],
+      "checks": [
+        {
+          "name": "gate",
+          "status": "COMPLETED",
+          "conclusion": "FAILURE"
+        },
+        {
+          "name": "DCO",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "security-fast",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "test-integrity",
+          "status": "COMPLETED",
+          "conclusion": "FAILURE"
+        }
+      ],
+      "incomplete_or_missing": [],
+      "not_success": [
+        "gate",
+        "test-integrity"
+      ],
+      "unexpected_conclusions": [],
+      "failed_checks": [
+        "gate",
+        "test-integrity"
+      ],
+      "result": "pass"
+    },
+    {
+      "pr": 9,
+      "url": "https://github.com/RuzniSadiq/task-management/pull/9",
+      "title": "canary 4 (DO NOT MERGE): failing assertion — gate should fail",
+      "head": "2edde103345d6444a4e1e3cb5cb94ee161148471",
+      "state": "CLOSED",
+      "expected_failing_checks": [
+        "gate"
+      ],
+      "checks": [
+        {
+          "name": "gate",
+          "status": "COMPLETED",
+          "conclusion": "FAILURE"
+        },
+        {
+          "name": "DCO",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "security-fast",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "test-integrity",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "incomplete_or_missing": [],
+      "not_success": [
+        "gate"
+      ],
+      "unexpected_conclusions": [],
+      "failed_checks": [
+        "gate"
+      ],
+      "result": "pass"
+    },
+    {
+      "pr": 10,
+      "url": "https://github.com/RuzniSadiq/task-management/pull/10",
+      "title": "canary 5 (DO NOT MERGE): unsigned commit — DCO should fail",
+      "head": "a2fb8057e6757679c49627bec58b204af6944927",
+      "state": "CLOSED",
+      "expected_failing_checks": [
+        "DCO"
+      ],
+      "checks": [
+        {
+          "name": "DCO",
+          "status": "COMPLETED",
+          "conclusion": "FAILURE"
+        },
+        {
+          "name": "gate",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "security-fast",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        },
+        {
+          "name": "test-integrity",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+        }
+      ],
+      "incomplete_or_missing": [],
+      "not_success": [
+        "DCO"
+      ],
+      "unexpected_conclusions": [],
+      "failed_checks": [
+        "DCO"
+      ],
+      "result": "pass"
+    }
+  ],
+  "related": [
+    "evidence/P2-agent-least-privilege.json (direct push refused, restricted token refused, repo-boundary guard)"
+  ],
+  "result": "pass"
+}

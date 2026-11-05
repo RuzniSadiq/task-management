@@ -10,6 +10,11 @@ pass/fail summary.
 |---|---|---|
 | `P2-agent-least-privilege.json` | P2 — Agent least privilege (FINOS AIGF MI-18 v3) | [#11](https://github.com/RuzniSadiq/task-management/issues/11) |
 
+| `scenarios/a/scenario-a.json`, `app-demo.txt` | Scenario A: the delivered app works, persists across restart, the full test suite passes; PRs, vendors and reviews that delivered it | [#65](https://github.com/RuzniSadiq/task-management/issues/65) |
+| `scenarios/b/scenario-b.json` | Scenario B: five controlled failures (canary PRs #6 to #10) and the required check that blocked each | #65 |
+| `scenarios/c/` | Scenario C: `verify-release` detects a tampered v0.1.0 tarball, and passes the untouched release | #65 |
+| `scenarios/d/` | Scenario D: `audit-query` answers for a commit and for v0.1.0 from retained evidence only | #65 |
+
 Run links for CI-side evidence (branch protection, test-integrity, DCO proof PRs)
 are recorded on the issues they belong to (#2, #4).
 
@@ -49,3 +54,31 @@ installed exactly as `scripts/loop.sh` installs it:
     sed -i '' 's/"lint": "npm run lint"/"lint": ""/' .agents/gate.json
     PATH="$GB:$PATH" git add .agents/gate.json        # refused by the guard
     cd - && git worktree remove --force ../wt-proof-guard && git branch -D proof/guard
+
+
+## Reproduce scenarios A to D
+
+Needs node >= 22.18, `gh` (authenticated, read access), `jq` and `curl`. It writes only under
+`evidence/scenarios/` and never writes to GitHub (no issues, releases, labels or pushes).
+
+    evidence/run-scenarios.sh          # all four; exit 1 if any scenario fails
+    evidence/run-scenarios.sh c d      # a subset
+
+- **A** starts the real server, creates, lists and patches tasks, checks the error codes, restarts the
+  server and lists again, runs `npm test`, and records the merged PRs, agent vendors and independent
+  reviews that delivered it.
+- **B** reads GitHub's recorded check results for the canary PRs (#6 clean, #7 deleted test, #8 skipped
+  test, #9 failing assertion, #10 unsigned commit). Each must have failed exactly its expected set of required checks (no more, no fewer; #8 trips both
+  `gate` and `test-integrity`) and none may have merged. Every required check must be present with a completed conclusion first. `evidence/run-scenarios.sh selftest` checks that logic against synthetic canaries (cancelled, timed-out, skipped,
+  still-running and unexpected-failure checks must all fail). Scenario B fails if the live required checks of `main`
+  cannot be read or differ from `.gibson-delivery.json`.
+  The agent-privilege proofs (refused direct push, refused token, repo-boundary guard) are
+  `P2-agent-least-privilege.json`.
+- **C** runs the real `scripts/verify-release.ts` against the real v0.1.0 release and its attestation. A
+  `gh` shim appends one byte to the tarball as it is downloaded, simulating a replaced artefact; the
+  detector must fail on the digest mismatches and the attestation, and exit 1 (0 for the untouched release). The same detector then passes the
+  untouched release. `--dry-run` means the `control-finding` issue is printed, not opened.
+- **D** feeds the release record, a fresh `verify-release` record and the `control-audit` JSONL to
+  `scripts/audit-query.ts`, which reads only those files, for one commit (PR #62's head) and for the tag.
+  Fields the recorded evidence does not contain (the merge commit, author vendor, reviewer login) come
+  back `null`, not guessed.
