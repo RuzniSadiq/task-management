@@ -15,6 +15,7 @@ import type { Answer } from "../scripts/audit-query.ts";
 //   AC4 fixtures incl. missing-evidence             -> audit-query.test.ts, plus the nested / symlink / huge-input fixtures here
 
 const HEAD = "a".repeat(39) + "1";
+const INSIDE = "c".repeat(39) + "3";
 const MERGE = "b".repeat(39) + "2";
 const DIGEST = "d".repeat(64);
 
@@ -222,13 +223,18 @@ test("deeply nested evidence is found", () => {
   } finally { cleanup(dir); }
 });
 
-test("a symlinked evidence subdirectory is followed", () => {
-  const real = fixture({ "audit.jsonl": rec() + "\n" });
-  const dir = fixture({});
+test("a symlink to a directory or file outside the evidence root is not read; one inside it is followed", () => {
+  const outside = fixture({ "audit.jsonl": rec() + "\n" });
+  const dir = fixture({ "inside/audit.jsonl": rec({ head_sha: INSIDE }) + "\n" });
   try {
-    symlinkSync(real, join(dir, "linked"), "dir");
-    assert.equal(query(dir, HEAD).code, 0);
-  } finally { cleanup(dir); cleanup(real); }
+    symlinkSync(outside, join(dir, "linked"), "dir");
+    symlinkSync(join(outside, "audit.jsonl"), join(dir, "ext.jsonl"));
+    symlinkSync(join(dir, "inside"), join(dir, "alias"), "dir");
+    const external = query(dir, HEAD);
+    assert.match(external.out, /NO EVIDENCE/, "external evidence must not answer the query");
+    assert.doesNotMatch(external.out, /ruzni-reviewer/);
+    assert.equal(query(dir, INSIDE).code, 0, "a link that stays inside the root still works");
+  } finally { cleanup(dir); cleanup(outside); }
 });
 
 test("a symlink loop terminates with a clean usage-style error, never a hang or stack trace", () => {

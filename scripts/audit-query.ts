@@ -45,7 +45,7 @@
 // compared case-insensitively. Unknown vendor is reported as not independent, never assumed independent.
 
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 export const SCHEMA = "task-management.control-evidence/v1";
 const MIN_PREFIX = 7;
@@ -115,8 +115,12 @@ function checksOf(v: unknown): Record<string, string> {
   return out;
 }
 
-/** Recursively list evidence files. A dangling link, unreadable entry or symlink cycle is a warning, never an abort. */
-function listFiles(dir: string, root: string, warnings: string[], seen: Set<string> = new Set()): string[] {
+/**
+ * Recursively list evidence files. A dangling link, unreadable entry, symlink cycle or a link whose
+ * target resolves outside the evidence root is a warning, never an abort and never read: the answer
+ * must come from evidence supplied inside --evidence only.
+ */
+function listFiles(dir: string, root: string, warnings: string[], seen: Set<string> = new Set(), realRoot: string = realpathSync(root)): string[] {
   const rel = (p: string): string => p.slice(root.length).replace(/^[/\\]+/, "") || ".";
   const real = realpathSync(dir);
   if (seen.has(real)) { warnings.push(`${rel(dir)}: directory already visited, symlink cycle or duplicate (skipped)`); return []; }
@@ -125,8 +129,10 @@ function listFiles(dir: string, root: string, warnings: string[], seen: Set<stri
   for (const name of readdirSync(dir).sort()) {
     const p = join(dir, name);
     let st;
-    try { st = statSync(p); } catch { warnings.push(`${rel(p)}: unreadable or dangling link (skipped)`); continue; }
-    if (st.isDirectory()) out.push(...listFiles(p, root, warnings, seen));
+    let target: string;
+    try { st = statSync(p); target = realpathSync(p); } catch { warnings.push(`${rel(p)}: unreadable or dangling link (skipped)`); continue; }
+    if (target !== realRoot && !target.startsWith(realRoot + sep)) { warnings.push(`${rel(p)}: resolves outside the evidence directory (skipped)`); continue; }
+    if (st.isDirectory()) out.push(...listFiles(p, root, warnings, seen, realRoot));
     else if (st.isFile() && /\.jsonl?$/i.test(name)) out.push(p);
   }
   return out;
