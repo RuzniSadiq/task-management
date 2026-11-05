@@ -255,6 +255,136 @@ describe("#77 GET /tasks?status=", () => {
   });
 });
 
+describe("#77 GET /tasks?status= adversarial sensors", () => {
+  async function names(base: string, query: string): Promise<string[]> {
+    const response = await fetch(`${base}/tasks${query}`);
+    assert.equal(response.status, 200, query);
+    return ((await response.json()) as Task[]).map((task) => task.title);
+  }
+
+  test("AC2 percent-encoded and plus-free spellings of a valid status are decoded and accepted", async () => {
+    await withServer(async (base) => {
+      await createTask(base, { title: "t" });
+      await createTask(base, { title: "p", status: "in_progress" });
+      await createTask(base, { title: "d", status: "done" });
+      assert.deepEqual(await names(base, "?status=%64one"), ["d"]);
+      assert.deepEqual(await names(base, "?status=in%5Fprogress"), ["p"]);
+      assert.deepEqual(await names(base, "?%73tatus=todo"), ["t"]);
+    });
+  });
+
+  test("AC3 invalid spellings are 400 and never the unfiltered list", async () => {
+    await withServer(async (base) => {
+      await createTask(base, { title: "t" });
+      const bad = ["?status", "?status=todo%20", "?status=todo+", "?status=%00", "?status=todo%00", "?status=in%20progress", "?status=to%64o%0A", "?status=all", "?status=*", "?status=null", "?status=undefined", "?status=todo,done", "?status=todo;done"];
+      for (const query of bad) {
+        const response = await fetch(`${base}/tasks${query}`);
+        const message = await assertError(response, 400);
+        assert.match(message, /todo, in_progress, done/, query);
+      }
+    });
+  });
+
+  test("AC3 a differently named or bracketed parameter is not the status filter", async () => {
+    await withServer(async (base) => {
+      await createTask(base, { title: "t" });
+      await createTask(base, { title: "d", status: "done" });
+      // Parameter names are case-sensitive and `status[]` is another name: ignored (AC5).
+      assert.deepEqual(await names(base, "?Status=done"), ["t", "d"]);
+      assert.deepEqual(await names(base, "?status[]=done"), ["t", "d"]);
+      assert.deepEqual(await names(base, "?statuses=done"), ["t", "d"]);
+    });
+  });
+
+  test("AC4 a repeated status is 400 whatever the values or order", async () => {
+    await withServer(async (base) => {
+      await createTask(base, { title: "t" });
+      for (const query of ["?status=&status=todo", "?status=todo&x=1&status=todo", "?status=bogus&status=bogus", "?status=todo&status=todo&status=todo"]) {
+        await assertError(await fetch(`${base}/tasks${query}`), 400);
+      }
+    });
+  });
+
+  test("AC5 an empty or bare query string is the unfiltered list", async () => {
+    await withServer(async (base) => {
+      await createTask(base, { title: "t" });
+      await createTask(base, { title: "d", status: "done" });
+      assert.deepEqual(await names(base, "?"), ["t", "d"]);
+      assert.deepEqual(await names(base, "?&"), ["t", "d"]);
+      assert.deepEqual(await names(base, "?x=1&y=2"), ["t", "d"]);
+    });
+  });
+
+  test("AC5 other methods on /tasks?status= are unchanged: POST creates, others get 405 with Allow", async () => {
+    await withServer(async (base) => {
+      const created = await postJson(base, "/tasks?status=done", { title: "q" });
+      assert.equal(created.status, 201);
+      assert.equal(((await created.json()) as Task).status, "todo");
+      for (const method of ["PUT", "DELETE", "PATCH"]) {
+        const response = await fetch(`${base}/tasks?status=todo`, { method });
+        assert.equal(response.headers.get("allow"), "GET, POST", method);
+        await assertError(response, 405);
+      }
+      // A status query on the PATCH route is ignored, not a filter.
+      const { id } = (await (await fetch(`${base}/tasks`)).json() as Task[])[0]!;
+      const patched = await postJson(base, `/tasks/${id}/status?status=bogus`, { status: "done" }, "PATCH");
+      assert.equal(patched.status, 200);
+    });
+  });
+
+  test("AC5 HEAD /tasks?status= gets the same status code as GET, with no body", async () => {
+    await withServer(async (base) => {
+      await createTask(base, { title: "t" });
+      const get = await fetch(`${base}/tasks?status=todo`);
+      const head = await fetch(`${base}/tasks?status=todo`, { method: "HEAD" });
+      // HEAD is not a supported method today; the filter must not change that.
+      const plainHead = await fetch(`${base}/tasks`, { method: "HEAD" });
+      assert.equal(get.status, 200);
+      assert.equal(head.status, plainHead.status);
+      assert.equal(await head.text(), "");
+    });
+  });
+
+  test("AC6 the filter reflects PATCH and survives a restart on the same file", async () => {
+    const tasksFile = await freshTasksFile();
+    const first = await start(tasksFile);
+    let movedId: string;
+    try {
+      const a = await createTask(first.base, { title: "a" });
+      await createTask(first.base, { title: "b" });
+      movedId = a.id;
+      const patched = await postJson(first.base, `/tasks/${a.id}/status`, { status: "in_progress" }, "PATCH");
+      assert.equal(patched.status, 200);
+      assert.deepEqual(await names(first.base, "?status=todo"), ["b"]);
+    } finally {
+      await first.running.close();
+    }
+    const second = await start(tasksFile);
+    try {
+      assert.deepEqual(await names(second.base, "?status=todo"), ["b"]);
+      const moved = (await (await fetch(`${second.base}/tasks?status=in_progress`)).json()) as Task[];
+      assert.deepEqual(moved.map((task) => task.id), [movedId]);
+      assert.deepEqual(await names(second.base, "?status=done"), []);
+    } finally {
+      await second.running.close();
+    }
+  });
+
+  test("AC3 a rejected filter does not change stored data", async () => {
+    const tasksFile = await freshTasksFile();
+    const { running, base } = await start(tasksFile);
+    try {
+      await createTask(base, { title: "t" });
+      const before = await readFile(tasksFile, "utf8");
+      await assertError(await fetch(`${base}/tasks?status=bogus`), 400);
+      await assertError(await fetch(`${base}/tasks?status=todo&status=done`), 400);
+      assert.equal(await readFile(tasksFile, "utf8"), before);
+    } finally {
+      await running.close();
+    }
+  });
+});
+
 describe("AC3 PATCH /tasks/:id/status", () => {
   test("returns 200 and the updated task; the list shows the change", async () => {
     await withServer(async (base) => {
