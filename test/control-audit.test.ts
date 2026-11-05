@@ -659,7 +659,7 @@ test("a push with no common ancestor (force push / history rewrite) becomes a fi
   assert.deepEqual(a.errors, []);
   assert.deepEqual(failed(a).map((r) => r.control.check), ["no-direct-push"]);
   assert.match(failed(a)[0]?.reasons.join() ?? "", /no common ancestor.*force push or history rewrite/);
-  assert.deepEqual(a.findings.map((f) => f.action), ["created"]);
+  assert.deepEqual(a.findings.map((f) => f.action), ["opened"]);
   assert.equal(g.created[0]?.title, directPushFindingTitle(push.after));
   const other: Gh = { ...g.gh, branchPushes: () => [push], compare: () => { throw new Error("HTTP 502"); } };
   const b = audit(other, opts);
