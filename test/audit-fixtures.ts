@@ -13,11 +13,13 @@ export interface PrSpec {
   reviewerVendor?: string;
   verdict?: "APPROVED" | "CHANGES_REQUESTED";
   failingCheck?: string;
+  author?: string;
+  mergeSha?: string;
 }
 
 /** JSONL exactly as `control-audit.ts --out` writes it, for the given merged PRs (plus the repo-level records). */
 export function controlAuditJsonl(specs: PrSpec[]): string {
-  const info = (s: PrSpec): PrInfo => ({ number: s.pr, title: `change ${s.pr}`, url: `https://github.com/o/r/pull/${s.pr}`, mergedAt: "2026-11-03T00:00:00Z", head: s.head });
+  const info = (s: PrSpec): PrInfo => ({ number: s.pr, title: `change ${s.pr}`, url: `https://github.com/o/r/pull/${s.pr}`, mergedAt: "2026-11-03T00:00:00Z", head: s.head, author: s.author ?? "RuzniSadiq", mergeSha: s.mergeSha ?? null });
   const by = (n: number): PrSpec => specs.find((s) => s.pr === n) ?? (() => { throw new Error(`no PR ${n}`); })();
   const gh: Gh = {
     mergedPrs: () => specs.map(info),

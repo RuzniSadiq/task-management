@@ -46,7 +46,7 @@ export const FINDING_LABEL = "control-finding";
 export const DEFAULT_REPO = "RuzniSadiq/task-management";
 export const DEFAULT_SINCE_DAYS = 30;
 
-export interface PrInfo { number: number; title: string; url: string; mergedAt: string; head: string }
+export interface PrInfo { number: number; title: string; url: string; mergedAt: string; head: string; author?: string | null; mergeSha?: string | null }
 export interface Commit { sha: string; message: string }
 export interface PrReview extends Review { body?: string | null }
 export interface Issue { number: number; title: string }
@@ -133,6 +133,21 @@ export function parseWaivers(text: string): Waiver[] {
   });
 }
 
+/**
+ * Who did what, recorded beside each PR control verdict so an independent party can answer "which agent, when".
+ * Every field is null when it could not be determined; none is inferred, and none affects a control result.
+ */
+export interface Actors {
+  author: string | null;
+  author_vendor: string | null;
+  reviewer: string | null;
+  reviewer_vendor: string | null;
+  merge_sha: string | null;
+  merged_at: string;
+  /** Each required check's conclusion at the head ("success", "failure", "missing", an in-progress status...). */
+  checks: Record<string, string>;
+}
+
 export interface Subject { kind: "pr" | "branch" | "commit"; ref: string; pr?: number; sha?: string }
 
 /** One line of the JSONL evidence file. */
@@ -150,6 +165,8 @@ export interface ControlRecord {
   evidence: string[];
   /** Set on a failed record that a reviewed waiver covers; the result is still "fail". */
   waiver?: Waiver;
+  /** Set on PR records: the agent, reviewer, merge commit and check conclusions behind the verdicts. */
+  actors?: Actors;
 }
 
 export type Finding =
@@ -221,7 +238,7 @@ function gather<T>(read: () => T, what: string, fail: (reason: string) => void):
 }
 
 /** Evaluate every per-PR control. */
-export function evaluatePr(gh: Gh, pr: PrInfo, cfg: DeliveryConfig): { control: Control; verdict: Verdict }[] {
+export function evaluatePr(gh: Gh, pr: PrInfo, cfg: DeliveryConfig, actors?: Actors): { control: Control; verdict: Verdict }[] {
   const out: { control: Control; verdict: Verdict }[] = [];
   const head = pr.head;
   const prRef = pr.url;
@@ -255,6 +272,12 @@ export function evaluatePr(gh: Gh, pr: PrInfo, cfg: DeliveryConfig): { control: 
   const checkReasons: string[] = [];
   const runs = gather(() => gh.checkRuns(head), `check runs at ${head}`, (r) => checkReasons.push(r));
   if (runs !== undefined) {
+    if (actors !== undefined) {
+      for (const ctx of cfg.requiredContexts) {
+        const latest = runs.filter((r) => r.name === ctx).sort((a, b) => Date.parse(b.started_at ?? "") - Date.parse(a.started_at ?? ""))[0];
+        actors.checks[ctx] = latest === undefined ? "missing" : latest.status === "completed" ? (latest.conclusion ?? "unknown") : latest.status;
+      }
+    }
     const green = requiredChecksGreen(runs, cfg.requiredContexts);
     if (!green.ok) checkReasons.push(green.reason);
   }
@@ -271,6 +294,7 @@ export function evaluatePr(gh: Gh, pr: PrInfo, cfg: DeliveryConfig): { control: 
     for (const c of commits) if (!SIGNED_OFF.test(trailerBlock(c.message))) dcoReasons.push(`commit ${c.sha} has no Signed-off-by trailer`);
     author = authorVendor(commits.map((c) => trailerBlock(c.message)));
     if ("reason" in author) trailerReasons.push(author.reason);
+    else if (actors !== undefined) actors.author_vendor = author.vendor;
   }
   const commitRefs = (commits ?? []).map((c) => `commit ${c.sha}`);
   out.push({ control: CONTROLS.dco, verdict: verdict(dcoReasons, commitRefs) });
@@ -281,8 +305,10 @@ export function evaluatePr(gh: Gh, pr: PrInfo, cfg: DeliveryConfig): { control: 
   if (author === undefined || "reason" in author) sepReasons.push(`author vendor unknown${author === undefined ? "" : ` (${author.reason})`}`);
   if (approving === undefined) sepReasons.push("no approving review to take the reviewer vendor from");
   else {
+    if (actors !== undefined) actors.reviewer = approving.user?.login ?? null;
     const declaredAll = [...(approving.body ?? "").matchAll(REVIEWER_VENDOR_ALL)].map((m) => (m[1] ?? "").toLowerCase());
     const declared = declaredAll[0];
+    if (actors !== undefined && declared !== undefined && declaredAll.every((d) => d === declared)) actors.reviewer_vendor = declared;
     if (declared === undefined) sepReasons.push("approving review does not declare a reviewer vendor ('## Second opinion — <vendor>')");
     else if (declaredAll.some((d) => d !== declared)) sepReasons.push(`approving review declares conflicting reviewer vendors (${[...new Set(declaredAll)].join(", ")})`);
     else if (author !== undefined && "vendor" in author && declared !== pickReviewer(author.vendor)) {
@@ -387,7 +413,8 @@ export function audit(gh: Gh, opts: Options): Audit {
   } catch (e) { errors.push(`could not list merged pull requests: ${errText(e)}`); }
   for (const pr of prs.sort((a, b) => a.number - b.number)) {
     const subject: Subject = { kind: "pr", ref: pr.url, pr: pr.number, sha: pr.head };
-    const recs = evaluatePr(gh, pr, cfg).map(({ control: c, verdict: v }) => emit(subject, c, v));
+    const actors: Actors = { author: pr.author ?? null, author_vendor: null, reviewer: null, reviewer_vendor: null, merge_sha: pr.mergeSha ?? null, merged_at: pr.mergedAt, checks: {} };
+    const recs = evaluatePr(gh, pr, cfg, actors).map(({ control: c, verdict: v }) => { const r = emit(subject, c, v); r.actors = actors; return r; });
     // A waiver accepts a control violation that was evaluated, never a failure to obtain the evidence. If any
     // read for this PR failed, no waiver applies to it: other checks may be derived from the missing evidence.
     const unreadable = recs.some((r) => r.reasons.some((x) => x.startsWith(READ_FAILURE)));
@@ -468,7 +495,7 @@ export function ghCli(repo: string): Gh {
     gh(["api", "--paginate", path, "--jq", jq]).split("\n").filter((l) => l.trim() !== "").map((l) => JSON.parse(l) as T);
   return {
     mergedPrs: (branch) => list<PrInfo>(`repos/${repo}/pulls?state=closed&base=${encodeURIComponent(branch)}&per_page=100`,
-      ".[] | select(.merged_at != null) | {number, title, url: .html_url, mergedAt: .merged_at, head: .head.sha}"),
+      ".[] | select(.merged_at != null) | {number, title, url: .html_url, mergedAt: .merged_at, head: .head.sha, author: .user.login, mergeSha: .merge_commit_sha}"),
     commits: (pr) => list<Commit>(`repos/${repo}/pulls/${pr}/commits?per_page=100`, ".[] | {sha, message: .commit.message}"),
     reviews: (pr) => list<PrReview>(`repos/${repo}/pulls/${pr}/reviews?per_page=100`,
       ".[] | {id, user: (if .user == null then null else {login: .user.login} end), state, commit_id, submitted_at, body}"),
