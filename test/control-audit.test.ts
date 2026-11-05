@@ -845,3 +845,26 @@ test("#61 CLI: a malformed waivers file exits 2 before any audit; a missing file
     assert.equal(existsSync(join(dir, "o.jsonl")), false);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("#61 a waiver never covers an evidence read failure: the check stays failed, a finding is filed and the run fails", () => {
+  const p = goodPr(74);
+  const f = fakeGh({ prs: [p], failOn: new Set(["checkRuns"]) });
+  const a = audit(f.gh, { ...opts, waivers: [waiverFor(p, "required-checks-green")] });
+  assert.equal(a.result, "fail");
+  const rec = a.records.find((r) => r.subject.pr === 74 && r.control.check === "required-checks-green");
+  assert.equal(rec?.result, "fail");
+  assert.equal(rec.waiver, undefined);
+  assert.match(rec.reasons.join(" "), /could not read check runs/);
+  assert.equal(f.created.length, 1);
+  assert.match(f.created[0]?.body ?? "", /could not read check runs/);
+});
+
+test("#61 a read failure on reviews is not waivable for any check that depends on it", () => {
+  const p = goodPr(75);
+  const f = fakeGh({ prs: [p], failOn: new Set(["reviews"]) });
+  const failing = checksFailed(audit(fakeGh({ prs: [p], failOn: new Set(["reviews"]) }).gh, opts), 75);
+  assert.ok(failing.length > 0);
+  const a = audit(f.gh, { ...opts, waivers: failing.map((c) => waiverFor(p, c)) });
+  assert.equal(a.result, "fail");
+  assert.ok(a.records.every((r) => r.waiver === undefined));
+});

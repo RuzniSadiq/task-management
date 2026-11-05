@@ -212,9 +212,12 @@ function latestVerdictAt(reviews: PrReview[], login: string, head: string): PrRe
   return mine.at(-1);
 }
 
+/** Every reason produced by an evidence read failure starts with this; waivers never cover such a record. */
+const READ_FAILURE = "could not read ";
+
 /** Never throws: a read failure is a failed control with the reason. */
 function gather<T>(read: () => T, what: string, fail: (reason: string) => void): T | undefined {
-  try { return read(); } catch (e) { fail(`could not read ${what}: ${errText(e)}`); return undefined; }
+  try { return read(); } catch (e) { fail(`${READ_FAILURE}${what}: ${errText(e)}`); return undefined; }
 }
 
 /** Evaluate every per-PR control. */
@@ -385,8 +388,11 @@ export function audit(gh: Gh, opts: Options): Audit {
   for (const pr of prs.sort((a, b) => a.number - b.number)) {
     const subject: Subject = { kind: "pr", ref: pr.url, pr: pr.number, sha: pr.head };
     const recs = evaluatePr(gh, pr, cfg).map(({ control: c, verdict: v }) => emit(subject, c, v));
+    // A waiver accepts a control violation that was evaluated, never a failure to obtain the evidence. If any
+    // read for this PR failed, no waiver applies to it: other checks may be derived from the missing evidence.
+    const unreadable = recs.some((r) => r.reasons.some((x) => x.startsWith(READ_FAILURE)));
     for (const r of recs) {
-      const w = r.result === "fail" ? (opts.waivers ?? []).find((x) => x.pr === pr.number && x.head === pr.head && x.check === r.control.check) : undefined;
+      const w = r.result === "fail" && !unreadable ? (opts.waivers ?? []).find((x) => x.pr === pr.number && x.head === pr.head && x.check === r.control.check) : undefined;
       if (w !== undefined) r.waiver = w;
     }
     const failed = recs.filter((r) => r.result === "fail" && r.waiver === undefined);
