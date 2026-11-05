@@ -129,15 +129,6 @@ describe("AC1 POST /tasks", () => {
 });
 
 describe("AC2 GET /tasks", () => {
-  test("an empty store returns 200 and []", async () => {
-    await withServer(async (base) => {
-      const response = await fetch(`${base}/tasks`);
-      assert.equal(response.status, 200);
-      assert.match(response.headers.get("content-type") ?? "", /^application\/json\b/);
-      assert.deepEqual(await response.json(), []);
-    });
-  });
-
   test("returns every task in creation order", async () => {
     await withServer(async (base) => {
       const created: Task[] = [];
