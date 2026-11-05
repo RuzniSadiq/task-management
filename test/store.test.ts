@@ -231,6 +231,53 @@ describe("AC4 list", () => {
     assert.equal(store.list("done")[0]!.title, "b");
   });
 
+  test("#79 AC2/AC3/AC7 list(undefined, title) is a trimmed, case-insensitive, literal substring match in creation order", async () => {
+    const store = await TaskStore.open(join(await freshDir(), "tasks.json"));
+    const a = await store.create({ title: "Buy Milk" });
+    const b = await store.create({ title: "walk the dog" });
+    const c = await store.create({ title: "milkshake 100% .* [a] ?" });
+    assert.deepEqual(store.list(undefined, "milk"), [a, c]);
+    assert.deepEqual(store.list(undefined, "MILK"), [a, c]);
+    assert.deepEqual(store.list(undefined, "  milk \n"), [a, c]);
+    assert.deepEqual(store.list(undefined, "buy milk"), [a]);
+    assert.deepEqual(store.list(undefined, "cat"), []);
+    for (const literal of ["%", ".*", "[a]", "?", "100%"]) {
+      assert.deepEqual(store.list(undefined, literal), [c], literal);
+    }
+    for (const wildcard of ["m.lk", "mi*k", "m%k", "%milk", "[a-z]", "^buy", "milk$", "(milk)", "\\"]) {
+      assert.deepEqual(store.list(undefined, wildcard), [], wildcard);
+    }
+    // Only the title is searched, not id or status.
+    assert.deepEqual(store.list(undefined, b.id.slice(0, 8)), []);
+    assert.deepEqual(store.list(undefined, "todo"), []);
+    store.list(undefined, "milk")[0]!.title = "changed";
+    assert.equal(store.list(undefined, "milk")[0]!.title, "Buy Milk");
+  });
+
+  test("#79 AC4 title and status must both match; AC8 results follow current state", async () => {
+    const store = await TaskStore.open(join(await freshDir(), "tasks.json"));
+    const a = await store.create({ title: "Buy milk" });
+    const b = await store.create({ title: "milk run", status: "done" });
+    await store.create({ title: "bread", status: "done" });
+    assert.deepEqual(store.list("done", "milk"), [b]);
+    assert.deepEqual(store.list("todo", "milk"), [a]);
+    assert.deepEqual(store.list("in_progress", "milk"), []);
+    const moved = await store.updateStatus(a.id, "done");
+    assert.deepEqual(store.list("done", "milk"), [moved, b]);
+    assert.deepEqual(store.list("todo", "milk"), []);
+  });
+
+  test("#79 AC5 list(_, title) rejects a blank or non-string title with ValidationError", async () => {
+    const store = await TaskStore.open(join(await freshDir(), "tasks.json"));
+    await store.create({ title: "a" });
+    for (const bad of ["", "   ", "\t\n", " ", null, 3, ["a"], {}]) {
+      assert.throws(() => store.list(undefined, bad), ValidationError, JSON.stringify(bad));
+      assert.throws(() => store.list("todo", bad), ValidationError, JSON.stringify(bad));
+    }
+    // An invalid status still wins as a 400 when the title is fine.
+    assert.throws(() => store.list("bogus", "a"), ValidationError);
+  });
+
   test("#77 list(status) rejects anything but the three statuses with ValidationError", async () => {
     const store = await TaskStore.open(join(await freshDir(), "tasks.json"));
     await store.create({ title: "a" });

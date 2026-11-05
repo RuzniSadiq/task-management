@@ -57,6 +57,23 @@ export function validateTitle(input: unknown): string {
   return title;
 }
 
+/** Returns the trimmed search text for a title filter, or throws ValidationError if blank. */
+export function validateTitleQuery(input: unknown): string {
+  if (typeof input !== "string") {
+    throw new ValidationError("title", "title must be a string");
+  }
+  const query = input.trim();
+  if (query.length === 0) {
+    throw new ValidationError("title", "title must not be blank");
+  }
+  return query;
+}
+
+/** True when `title` contains `query`, as plain text, ignoring case. `query` is already trimmed. */
+export function titleContains(title: string, query: string): boolean {
+  return title.toLowerCase().includes(query.toLowerCase());
+}
+
 export function isTaskStatus(input: unknown): input is TaskStatus {
   return typeof input === "string" && (TASK_STATUSES as readonly string[]).includes(input);
 }

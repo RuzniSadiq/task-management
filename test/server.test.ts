@@ -255,6 +255,136 @@ describe("#77 GET /tasks?status=", () => {
   });
 });
 
+describe("#79 GET /tasks?title=", () => {
+  async function get(base: string, query: string): Promise<Response> {
+    return fetch(`${base}/tasks${query}`);
+  }
+
+  async function titles(base: string, query: string): Promise<string[]> {
+    const response = await get(base, query);
+    assert.equal(response.status, 200, query);
+    return ((await response.json()) as Task[]).map((task) => task.title);
+  }
+
+  async function seed(base: string): Promise<Task[]> {
+    return [
+      await createTask(base, { title: "Buy Milk" }),
+      await createTask(base, { title: "walk the dog", status: "in_progress" }),
+      await createTask(base, { title: "milk the cow", status: "done" }),
+      await createTask(base, { title: "100% pure.* [x]?" }),
+      await createTask(base, { title: "café au lait" }),
+      await createTask(base, { title: "a b" }),
+    ];
+  }
+
+  test("AC1 no title parameter is unchanged: all tasks, or the status filter alone", async () => {
+    await withServer(async (base) => {
+      const all = await seed(base);
+      assert.deepEqual(await (await get(base, "")).json(), all);
+      assert.deepEqual(await (await get(base, "?status=done")).json(), [all[2]]);
+    });
+  });
+
+  test("AC2 matches case-insensitively in creation order; no match is 200 and []", async () => {
+    await withServer(async (base) => {
+      const all = await seed(base);
+      const response = await get(base, "?title=milk");
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get("content-type") ?? "", /^application\/json\b/);
+      assert.deepEqual(await response.json(), [all[0], all[2]]);
+      assert.deepEqual(await titles(base, "?title=MiLk"), ["Buy Milk", "milk the cow"]);
+      assert.deepEqual(await (await get(base, "?title=nothing")).json(), []);
+    });
+  });
+
+  test("AC3 text is literal: wildcard and regex characters match nothing special; encoding decoded once", async () => {
+    await withServer(async (base) => {
+      await seed(base);
+      for (const query of ["%25", "*", ".", "%3F", "%5B", "pure.*", "100%25", "%5Bx%5D%3F"]) {
+        assert.deepEqual(await titles(base, `?title=${query}`), ["100% pure.* [x]?"], query);
+      }
+      for (const query of ["m.lk", "%5Ba-z%5D", "%5Ebuy", "milk%24", "%25milk", "(milk)", "%5C"]) {
+        assert.deepEqual(await titles(base, `?title=${query}`), [], query);
+      }
+      assert.deepEqual(await titles(base, "?title=caf%C3%A9"), ["café au lait"]);
+      assert.deepEqual(await titles(base, "?title=a%20b"), ["a b"]);
+      assert.deepEqual(await titles(base, "?title=a+b"), ["a b"]);
+      // Decoded once: %2520 is the literal text "%20", which no title contains.
+      assert.deepEqual(await titles(base, "?title=a%2520b"), []);
+      // The match is on the title only.
+      const all = (await (await get(base, "")).json()) as Task[];
+      assert.deepEqual(await titles(base, `?title=${all[0]!.id}`), []);
+      assert.deepEqual(await titles(base, "?title=in_progress"), []);
+    });
+  });
+
+  test("AC4 title combines with status", async () => {
+    await withServer(async (base) => {
+      const all = await seed(base);
+      assert.deepEqual(await (await get(base, "?title=milk&status=done")).json(), [all[2]]);
+      assert.deepEqual(await (await get(base, "?status=todo&title=milk")).json(), [all[0]]);
+      assert.deepEqual(await (await get(base, "?title=milk&status=in_progress")).json(), []);
+      await assertError(await get(base, "?title=milk&status=bogus"), 400);
+    });
+  });
+
+  test("AC5 a blank title is 400 with {error}, never the unfiltered list", async () => {
+    await withServer(async (base) => {
+      await seed(base);
+      for (const query of ["?title=", "?title=%20", "?title=+", "?title=%20%20%09", "?title=%0A", "?title=%C2%A0", "?title", "?title=&status=todo"]) {
+        await assertError(await get(base, query), 400);
+      }
+    });
+  });
+
+  test("AC6 a repeated title is 400 with {error}", async () => {
+    await withServer(async (base) => {
+      await seed(base);
+      for (const query of ["?title=a&title=b", "?title=milk&title=milk", "?title=milk&title=", "?title=&title=milk"]) {
+        await assertError(await get(base, query), 400);
+      }
+    });
+  });
+
+  test("AC7 surrounding whitespace in the search text is trimmed", async () => {
+    await withServer(async (base) => {
+      await seed(base);
+      assert.deepEqual(await titles(base, "?title=%20%20milk%20"), ["Buy Milk", "milk the cow"]);
+      assert.deepEqual(await titles(base, "?title=%09milk%0A"), ["Buy Milk", "milk the cow"]);
+      assert.deepEqual(await titles(base, "?title=+walk+the+dog+"), ["walk the dog"]);
+    });
+  });
+
+  test("AC8 other parameters are ignored; POST and PATCH are unchanged; results follow current state", async () => {
+    await withServer(async (base) => {
+      const all = await seed(base);
+      assert.deepEqual(await titles(base, "?x=1&title=walk&sort=desc"), ["walk the dog"]);
+      assert.equal((await postJson(base, "/tasks?title=", { title: "extra milk" })).status, 201);
+      const patched = await postJson(base, `/tasks/${all[0]!.id}/status?title=`, { status: "done" }, "PATCH");
+      assert.equal(patched.status, 200);
+      assert.deepEqual(await titles(base, "?title=milk&status=done"), ["Buy Milk", "milk the cow"]);
+      assert.deepEqual(await titles(base, "?title=milk&status=todo"), ["extra milk"]);
+    });
+  });
+
+  test("AC8 the filter reads the persisted file after a restart", async () => {
+    const file = await freshTasksFile();
+    const first = await start(file);
+    try {
+      await createTask(first.base, { title: "Buy Milk" });
+      await createTask(first.base, { title: "bread" });
+    } finally {
+      await first.running.close();
+    }
+    const second = await start(file);
+    try {
+      assert.deepEqual(await titles(second.base, "?title=MILK"), ["Buy Milk"]);
+    } finally {
+      await second.running.close();
+    }
+  });
+});
+
 describe("#77 GET /tasks?status= adversarial sensors", () => {
   async function names(base: string, query: string): Promise<string[]> {
     const response = await fetch(`${base}/tasks${query}`);
