@@ -1,0 +1,359 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loadEvidence, answer, main, SCHEMA } from "../scripts/audit-query.ts";
+import type { Answer } from "../scripts/audit-query.ts";
+import { controlAuditJsonl } from "./audit-fixtures.ts";
+
+// Adversarial cases for issue #42 (audit-query). The happy path lives in audit-query.test.ts.
+//
+// AC map (criterion -> test):
+//   AC1 reads only --evidence files, no live calls  -> "source makes no network/gh/git calls", "evidence dir is never modified"
+//   AC2 five answers in text and --json             -> audit-query.test.ts (all five), plus conflicting-checks / approver cases here
+//   AC3 non-zero + explicit "no evidence"           -> sha-prefix edges, tag-only / skipped-only cases here
+//   AC4 fixtures incl. missing-evidence             -> audit-query.test.ts, plus the nested / symlink / huge-input fixtures here
+
+const HEAD = "a".repeat(39) + "1";
+const INSIDE = "c".repeat(39) + "3";
+const MERGE = "b".repeat(39) + "2";
+const DIGEST = "d".repeat(64);
+
+/** Real control-audit.ts output for one merged PR (default #49 at HEAD). Ends with a newline. */
+const rec = (o: { pr?: number; head?: string; authorVendor?: string; reviewerVendor?: string; failingCheck?: string } = {}): string =>
+  controlAuditJsonl([{ pr: 49, head: HEAD, ...o }]);
+/** A hand-written line in the shape control-audit.ts emits, for edge cases the producer cannot be made to produce. */
+const line = (o: Record<string, unknown>): string => JSON.stringify({
+  schema: SCHEMA, event: "control.evaluated", recorded_at: "2026-11-05T00:00:00.000Z", repository: "o/r", run: { url: "u", attempt: "1" },
+  subject: { kind: "pr", ref: "r", pr: 1, sha: HEAD }, control: { id: "RC-005", catalog: "c", version: "1", check: "required-checks-green", name: "n" },
+  result: "pass", reasons: [], evidence: [], ...o,
+});
+
+const release = (o: Record<string, unknown> = {}): object => ({
+  schema: SCHEMA, event: "release.published", recorded_at: "2026-11-05T10:00:00.000Z",
+  artefact: { name: "task-management-0.1.0.tgz", sha256: DIGEST, tag: "v0.1.0", commit: MERGE },
+  triggered_by: "RuzniSadiq", approvals: [{ login: "RuzniSadiq", state: "approved", comment: "ok" }], checks: { test: "pass" }, ...o,
+});
+const verify = (tags: { tag: string; result: string }[], at = "2026-11-05T12:00:00.000Z", skipped: { tag: string; reason: string }[] = []): object => ({
+  schema: SCHEMA, event: "release.verified", recorded_at: at, result: "pass", releases: tags, skipped,
+});
+
+function fixture(files: Record<string, string | object>): string {
+  const dir = mkdtempSync(join(tmpdir(), "audit-query-adv-"));
+  for (const [name, content] of Object.entries(files)) {
+    const p = join(dir, name);
+    mkdirSync(join(p, ".."), { recursive: true });
+    writeFileSync(p, typeof content === "string" ? content : JSON.stringify(content));
+  }
+  return dir;
+}
+const cleanup = (dir: string): void => rmSync(dir, { recursive: true, force: true });
+
+function run(argv: string[]): { out: string; err: string; code: number } {
+  let out = "";
+  let err = "";
+  const code = main(argv, { out: (s) => { out += s; }, err: (s) => { err += s; } });
+  return { out, err, code };
+}
+const query = (dir: string, q: string, extra: string[] = []) => run([q, "--evidence", dir, ...extra]);
+
+function ans(dir: string, q: string): Answer {
+  const a = answer(loadEvidence(dir), q);
+  assert.ok(!("ambiguous" in a));
+  return a;
+}
+
+// ---- AC1: evidence only ----------------------------------------------------------------------
+
+test("source makes no network, gh, git or subprocess calls", () => {
+  const src = readFileSync(new URL("../scripts/audit-query.ts", import.meta.url), "utf8");
+  const code = src.split("\n").filter((l) => !l.trimStart().startsWith("//")).join("\n");
+  for (const banned of [/node:(child_process|http|https|http2|net|tls|dgram|dns)/, /\bfetch\s*\(/, /\bXMLHttpRequest\b/, /\bexecSync\b|\bspawn(Sync)?\b|\bexecFile/, /\bgh\s+(api|pr|run)\b/]) {
+    assert.doesNotMatch(code, banned);
+  }
+});
+
+test("evidence dir is never modified by a query", () => {
+  const dir = fixture({ "a.jsonl": rec(), "r/release-evidence.json": release(), "v.json": verify([{ tag: "v0.1.0", result: "pass" }]) });
+  const snap = (): string => JSON.stringify(["a.jsonl", "r/release-evidence.json", "v.json"].map((f) => readFileSync(join(dir, f), "utf8")))
+    + JSON.stringify(readdirSync(dir, { recursive: true }).sort());
+  try {
+    const before = snap();
+    assert.equal(query(dir, HEAD).code, 0);
+    assert.equal(query(dir, "v0.1.0", ["--json"]).code, 0);
+    assert.equal(snap(), before);
+  } finally { cleanup(dir); }
+});
+
+// ---- AC3: sha prefix edges --------------------------------------------------------------------
+
+test("sha prefix: 6 chars is below the minimum and finds nothing; 7 chars finds the change", () => {
+  const dir = fixture({ "a.jsonl": rec() });
+  try {
+    assert.equal(query(dir, HEAD.slice(0, 6)).code, 1);
+    assert.equal(query(dir, HEAD.slice(0, 7)).code, 0);
+    assert.equal(query(dir, HEAD.slice(0, 7).toUpperCase()).code, 0);
+  } finally { cleanup(dir); }
+});
+
+test("sha prefix: 7+ non-hex characters never match a commit", () => {
+  const dir = fixture({ "a.jsonl": rec() });
+  try {
+    for (const q of ["zzzzzzz", "aaaaaaag", "aaaaaaa!"]) assert.equal(query(dir, q).code, 1, q);
+  } finally { cleanup(dir); }
+});
+
+test("sha prefix: uppercase sha in the evidence still matches", () => {
+  const dir = fixture({ "a.jsonl": rec().replace(new RegExp(HEAD, "g"), HEAD.toUpperCase()) });
+  try {
+    assert.equal(ans(dir, HEAD).change?.pr, 49);
+  } finally { cleanup(dir); }
+});
+
+test("sha prefix: two PR heads sharing a prefix is ambiguous, not a guess", () => {
+  const dir = fixture({ "a.jsonl": controlAuditJsonl([{ pr: 1, head: "abcdef1" + "0".repeat(33) }, { pr: 2, head: "abcdef1" + "2".repeat(33) }]) });
+  try {
+    const t = query(dir, "abcdef1");
+    assert.equal(t.code, 2);
+    assert.match(t.err, /ambiguous/);
+    // a longer prefix disambiguates
+    assert.equal(query(dir, "abcdef10").code, 0);
+  } finally { cleanup(dir); }
+});
+
+test("sha prefix: the same sha seen in the audit records and the release is not 'ambiguous'", () => {
+  const dir = fixture({ "a.jsonl": rec({ head: MERGE }), "r.json": release() });
+  try {
+    const a = ans(dir, MERGE.slice(0, 7));
+    assert.equal(a.release?.tag, "v0.1.0");
+    assert.equal(a.change?.head_sha, MERGE);
+  } finally { cleanup(dir); }
+});
+
+// ---- AC3/AC2: tag-only and partial verify evidence --------------------------------------------
+
+test("tag with only verify-release evidence: found, no change/release, verification reported", () => {
+  const dir = fixture({ "v.json": verify([{ tag: "v0.1.0", result: "fail" }]) });
+  try {
+    const a = ans(dir, "v0.1.0");
+    assert.equal(a.found, true);
+    assert.equal(a.change, null);
+    assert.equal(a.release, null);
+    assert.equal(a.verification?.result, "fail");
+    const t = query(dir, "v0.1.0");
+    assert.equal(t.code, 0);
+    assert.match(t.out, /4\. What was released[^\n]*\n\s+no evidence/);
+    assert.match(t.out, /FAIL/);
+  } finally { cleanup(dir); }
+});
+
+test("verify evidence for a different tag is not attached to this release", () => {
+  const dir = fixture({ "r.json": release(), "v.json": verify([{ tag: "v0.2.0", result: "pass" }]) });
+  try {
+    const a = ans(dir, "v0.1.0");
+    assert.equal(a.verification?.reverified, false);
+    assert.equal(query(dir, "v0.2.0").code, 0);
+  } finally { cleanup(dir); }
+});
+
+test("a tag that was only SKIPPED by verify-release was not re-verified", () => {
+  const dir = fixture({ "v.json": verify([], undefined, [{ tag: "v0.3.0", reason: "draft (not published)" }]) });
+  try {
+    assert.equal(query(dir, "v0.3.0").code, 1);
+  } finally { cleanup(dir); }
+});
+
+test("a verification older than the release record is flagged, not presented as 'since'", () => {
+  const dir = fixture({ "r.json": release(), "v.json": verify([{ tag: "v0.1.0", result: "pass" }], "2026-11-01T00:00:00.000Z") });
+  try {
+    assert.equal(ans(dir, "v0.1.0").verification?.since_release, false);
+    assert.match(query(dir, "v0.1.0").out, /older than the release record/);
+  } finally { cleanup(dir); }
+});
+
+test("release approvals that are not 'approved' do not count as approvers", () => {
+  const dir = fixture({ "r.json": release({ approvals: [{ login: "mallory", state: "rejected" }, { login: "", state: "approved" }, "junk", null] }) });
+  try {
+    assert.deepEqual(ans(dir, "v0.1.0").release?.approved_by, []);
+    assert.match(query(dir, "v0.1.0").out, /no approver recorded/);
+  } finally { cleanup(dir); }
+});
+
+// ---- duplicates / conflicts -------------------------------------------------------------------
+
+test("two release records for one tag with different digests: the conflict is surfaced, not silently resolved", () => {
+  const other = release({ artefact: { name: "task-management-0.1.0.tgz", sha256: "e".repeat(64), tag: "v0.1.0", commit: MERGE } });
+  const dir = fixture({ "a/release-evidence.json": release(), "b/release-evidence.json": other });
+  try {
+    const a = ans(dir, "v0.1.0");
+    assert.ok(a.warnings.some((w) => /v0\.1\.0/.test(w) && /conflict|multiple|duplicate/i.test(w)), JSON.stringify(a.warnings));
+    assert.match(query(dir, "v0.1.0").out, /warning:.*v0\.1\.0/);
+  } finally { cleanup(dir); }
+});
+
+test("identical duplicate release records (same digest) do not raise a conflict", () => {
+  const dir = fixture({ "a/release-evidence.json": release(), "b/release-evidence.json": release() });
+  try {
+    assert.deepEqual(ans(dir, "v0.1.0").warnings, []);
+  } finally { cleanup(dir); }
+});
+
+test("two required-checks-green records at one head, one failing: the head is reported failed", () => {
+  const dir = fixture({ "a.jsonl": [line({ evidence: ["check gate", "check DCO"] }), line({ result: "fail", reasons: ["check gate: failure"] })].join("\n") + "\n" });
+  try {
+    const a = ans(dir, HEAD);
+    assert.equal(a.checks?.result, "fail");
+    assert.deepEqual(a.checks?.passed, []);
+    assert.match(a.checks?.failure_reasons.join("\n") ?? "", /gate/);
+  } finally { cleanup(dir); }
+});
+
+test("a non-'pass' result (pending, number, uppercase) is never reported as a pass", () => {
+  for (const result of ["pending", "PASS", "unknown"]) {
+    const dir = fixture({ "a.jsonl": line({ result, evidence: ["check gate"] }) + "\n" });
+    try {
+      const a = ans(dir, HEAD);
+      assert.equal(a.checks?.result, result);
+      assert.deepEqual(a.checks?.passed, [], result);
+    } finally { cleanup(dir); }
+  }
+});
+
+test("a record with the right shape but a wrong or missing schema/event cannot affect the answer", () => {
+  const forged = (o: Record<string, unknown>): string => JSON.stringify({ ...JSON.parse(line({})) as object, ...o });
+  const lines = [forged({ schema: undefined }), forged({ schema: "other/v1" }), forged({ event: undefined }), forged({ event: "release.published" })];
+  const dir = fixture({ "a.jsonl": lines.join("\n") + "\n" });
+  try {
+    const a = ans(dir, HEAD);
+    assert.equal(a.found, false);
+    assert.equal(a.warnings.length, 4);
+    assert.equal(query(dir, HEAD).code, 1);
+  } finally { cleanup(dir); }
+});
+
+test("contradictory runs: failed approval-at-head with passed vendor-separation is never 'independent: yes'", () => {
+  const ctl = (check: string): Record<string, unknown> => ({ id: "SDLC-SEC-008", catalog: "c", version: "1", check, name: "n" });
+  const dir = fixture({
+    "run1.jsonl": line({ control: ctl("vendor-separation") }) + "\n",
+    "run2.jsonl": line({ control: ctl("independent-approval-at-head"), result: "fail", reasons: ["latest verdict is CHANGES_REQUESTED"] }) + "\n",
+  });
+  const onlySep = fixture({ "a.jsonl": line({ control: ctl("vendor-separation") }) + "\n" });
+  try {
+    const a = ans(dir, HEAD);
+    assert.equal(a.approval?.independent, false);
+    assert.match(query(dir, HEAD).out, /independent vendor \(vendor-separation\): NO/);
+    assert.doesNotMatch(query(dir, HEAD).out, /vendor-separation\): yes/);
+    assert.equal(ans(onlySep, HEAD).approval?.independent, null, "separation alone, no approval verdict: unknown, not yes");
+  } finally { cleanup(dir); cleanup(onlySep); }
+});
+
+// ---- file-system shapes -----------------------------------------------------------------------
+
+test("deeply nested evidence is found", () => {
+  const dir = fixture({ "a/b/c/d/e/f/g/audit.jsonl": rec() });
+  try {
+    assert.equal(query(dir, HEAD).code, 0);
+  } finally { cleanup(dir); }
+});
+
+test("a symlink to a directory or file outside the evidence root is not read; one inside it is followed", () => {
+  const outside = fixture({ "audit.jsonl": rec() });
+  const dir = fixture({ "inside/audit.jsonl": rec({ head: INSIDE }) });
+  try {
+    symlinkSync(outside, join(dir, "linked"), "dir");
+    symlinkSync(join(outside, "audit.jsonl"), join(dir, "ext.jsonl"));
+    symlinkSync(join(dir, "inside"), join(dir, "alias"), "dir");
+    const external = query(dir, HEAD);
+    assert.match(external.out, /NO EVIDENCE/, "external evidence must not answer the query");
+    assert.doesNotMatch(external.out, /PR #49/);
+    assert.equal(query(dir, INSIDE).code, 0, "a link that stays inside the root still works");
+  } finally { cleanup(dir); cleanup(outside); }
+});
+
+test("a symlink loop terminates with a clean usage-style error, never a hang or stack trace", () => {
+  const dir = fixture({ "audit.jsonl": rec() });
+  try {
+    symlinkSync(dir, join(dir, "loop"), "dir");
+    const t = query(dir, HEAD);
+    assert.ok(t.code === 0 || t.code === 2, `exit ${t.code}`);
+    assert.doesNotMatch(t.err, /\n\s+at /);
+  } finally { cleanup(dir); }
+});
+
+test("a dangling symlink does not hide the good evidence next to it", () => {
+  const dir = fixture({ "audit.jsonl": rec() });
+  try {
+    symlinkSync(join(dir, "nowhere.json"), join(dir, "dangling.json"));
+    const t = query(dir, HEAD);
+    assert.equal(t.code, 0, t.err);
+  } finally { cleanup(dir); }
+});
+
+test("--evidence pointing at a file, not a directory, is a usage error", () => {
+  const dir = fixture({ "audit.jsonl": rec() });
+  try {
+    const t = run([HEAD, "--evidence", join(dir, "audit.jsonl")]);
+    assert.equal(t.code, 2);
+    assert.match(t.err, /cannot read evidence dir/);
+  } finally { cleanup(dir); }
+});
+
+test("non-evidence files are ignored; bad JSON is a warning; foreign-schema JSON is silent", () => {
+  const dir = fixture({
+    "notes.txt": "hello", "broken.json": "{not json", "other.json": { schema: "something/else", event: "release.published" },
+    "unknown-event.json": { schema: SCHEMA, event: "release.exploded" }, "audit.jsonl": rec(),
+  });
+  try {
+    const a = ans(dir, HEAD);
+    assert.equal(a.found, true);
+    assert.deepEqual(a.warnings, ["broken.json: not valid JSON (skipped)"]);
+  } finally { cleanup(dir); }
+});
+
+test("JSONL tolerates CRLF, blank lines, a missing trailing newline and non-string sha", () => {
+  const f = "f".repeat(40);
+  const text = `${rec().trimEnd().replace(/\n/g, "\r\n")}\r\n\r\n${line({ subject: { kind: "pr", pr: 3, sha: 5 } })}\r\n${line({ subject: { kind: "pr", pr: 50, sha: f } })}`;
+  const dir = fixture({ "a.jsonl": text });
+  try {
+    assert.equal(ans(dir, HEAD).found, true);
+    assert.equal(ans(dir, f).change?.pr, 50);
+    assert.equal(ans(dir, HEAD).warnings.length, 0, "a record with no usable sha is ignored, not a parse failure");
+  } finally { cleanup(dir); }
+});
+
+test("huge JSONL (100k records) is answered quickly and the one match is found", () => {
+  const lines: string[] = [];
+  for (let i = 0; i < 100_000; i++) lines.push(line({ subject: { kind: "pr", pr: i, sha: i.toString(16).padStart(40, "0") } }));
+  const dir = fixture({ "big.jsonl": lines.join("\n") + "\n" });
+  try {
+    const t0 = Date.now();
+    const a = ans(dir, (77_777).toString(16).padStart(40, "0"));
+    assert.equal(a.change?.pr, 77_777);
+    assert.ok(Date.now() - t0 < 10_000, `took ${Date.now() - t0}ms`);
+    assert.equal(query(dir, "f".repeat(40)).code, 1);
+  } finally { cleanup(dir); }
+});
+
+// ---- argument handling ------------------------------------------------------------------------
+
+test("flag order does not matter, extra positionals and a flag-as-dir are usage errors", () => {
+  const dir = fixture({ "a.jsonl": rec() });
+  try {
+    assert.equal(run(["--json", "--evidence", dir, HEAD]).code, 0);
+    assert.equal(run(["--evidence", dir, HEAD, "--json"]).code, 0);
+    assert.equal(run([HEAD, "extra", "--evidence", dir]).code, 2);
+    assert.equal(run([HEAD, "--evidence", "--json"]).code, 2);
+    assert.equal(run([HEAD, "--evidence"]).code, 2);
+  } finally { cleanup(dir); }
+});
+
+test("a query that looks like a flag or path cannot escape the evidence dir", () => {
+  const dir = fixture({ "a.jsonl": rec() });
+  try {
+    for (const q of ["../../etc/passwd", "", " "]) {
+      const t = query(dir, q);
+      assert.notEqual(t.code, 0, JSON.stringify(q));
+    }
+  } finally { cleanup(dir); }
+});
