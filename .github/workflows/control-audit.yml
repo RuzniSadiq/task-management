@@ -30,6 +30,9 @@ concurrency:
 jobs:
   audit:
     name: audit
+    # workflow_dispatch can pick any branch; this job holds an issues-write token and possibly the
+    # CONTROL_AUDIT_TOKEN secret, so it must only ever run the script as it is on main.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

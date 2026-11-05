@@ -496,6 +496,12 @@ test("AC1: every action is pinned by a full commit SHA", () => {
   for (const l of uses) assert.match(l, /uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40}(\s|$)/, l);
 });
 
+test("AC1: the privileged job runs only from refs/heads/main, so a dispatch from another branch cannot run its script with the token", () => {
+  assert.match(workflow, /^ {4}name: audit\n(?: {4}#.*\n)* {4}if: github\.ref == 'refs\/heads\/main'\n {4}runs-on: /m);
+  assert.doesNotMatch(workflow, /^ {6}ref:/m, "checkout must not take a caller-chosen ref");
+  assert.doesNotMatch(workflow, /inputs\./, "no dispatch input may reach the job");
+});
+
 test("AC1: permissions are empty at workflow level and exactly contents/pull-requests read + issues write on the job", () => {
   assert.match(workflow, /^permissions: \{\}$/m);
   const block = /^ {4}permissions:\n((?: {6}\S.*\n)+)/m.exec(workflow)?.[1];
