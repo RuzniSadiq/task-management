@@ -232,6 +232,22 @@ test("a record with the right shape but a wrong or missing schema/event cannot a
   } finally { cleanup(dir); }
 });
 
+test("contradictory runs: failed approval-at-head with passed vendor-separation is never 'independent: yes'", () => {
+  const ctl = (check: string): Record<string, unknown> => ({ id: "SDLC-SEC-008", catalog: "c", version: "1", check, name: "n" });
+  const dir = fixture({
+    "run1.jsonl": line({ control: ctl("vendor-separation") }) + "\n",
+    "run2.jsonl": line({ control: ctl("independent-approval-at-head"), result: "fail", reasons: ["latest verdict is CHANGES_REQUESTED"] }) + "\n",
+  });
+  const onlySep = fixture({ "a.jsonl": line({ control: ctl("vendor-separation") }) + "\n" });
+  try {
+    const a = ans(dir, HEAD);
+    assert.equal(a.approval?.independent, false);
+    assert.match(query(dir, HEAD).out, /independent vendor \(vendor-separation\): NO/);
+    assert.doesNotMatch(query(dir, HEAD).out, /vendor-separation\): yes/);
+    assert.equal(ans(onlySep, HEAD).approval?.independent, null, "separation alone, no approval verdict: unknown, not yes");
+  } finally { cleanup(dir); cleanup(onlySep); }
+});
+
 // ---- file-system shapes -----------------------------------------------------------------------
 
 test("deeply nested evidence is found", () => {

@@ -272,7 +272,9 @@ export function answer(corpus: Corpus, query: string): Answer | { ambiguous: str
       reviewer: null,
       independent_approval_at_head: approval?.result ?? null,
       vendor_separation: separation?.result ?? null,
-      independent: separation === null ? null : separation.result === "pass",
+      // Independent only when BOTH a valid approval at the head and vendor separation are recorded passes.
+      independent: approval?.result === "fail" || separation?.result === "fail" ? false
+        : approval?.result === "pass" && separation?.result === "pass" ? true : null,
       reasons: [...(approval?.result === "pass" ? [] : approval?.reasons ?? []), ...(separation?.result === "pass" ? [] : separation?.reasons ?? [])],
     },
     checks: records.length === 0 ? null : {
