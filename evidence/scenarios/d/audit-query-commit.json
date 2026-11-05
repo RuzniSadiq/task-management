@@ -8,13 +8,16 @@
   "change": {
     "pr": 62,
     "head_sha": "575356479e3f15ac241731ce224abac0ad106204",
-    "merge_sha": null,
-    "author_vendor": null,
+    "merge_sha": "4a8ae33d9dcd0749d729e9acffeab6a2c6131d70",
+    "merged_at": "2026-11-05T07:17:16Z",
+    "author": "RuzniSadiq",
+    "author_vendor": "claude",
     "merged_via_pr": "pass",
     "vendor_declared": "pass"
   },
   "approval": {
-    "reviewer": null,
+    "reviewer": "ruzni-reviewer",
+    "reviewer_vendor": "codex",
     "independent_approval_at_head": "pass",
     "vendor_separation": "pass",
     "independent": true,
@@ -29,6 +32,12 @@
       "security-fast",
       "test-integrity"
     ],
+    "conclusions": {
+      "gate": "success",
+      "security-fast": "success",
+      "test-integrity": "success",
+      "DCO": "success"
+    },
     "failure_reasons": [],
     "controls": [
       {

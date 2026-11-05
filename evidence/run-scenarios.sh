@@ -15,10 +15,40 @@ SINCE="${SINCE:-2026-11-04T15:00:00Z}"
 OUT=evidence/scenarios
 NOW() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 HEAD_SHA="$(git rev-parse HEAD)"
+
+# Scenario B's verdict logic against synthetic canaries: each of these must FAIL, the clean one must pass.
+selftest_b() {
+  local want='["DCO","gate","security-fast","test-integrity"]' bad=0 name json
+  mk() { jq -n --arg g "$1" --arg st "${2:-COMPLETED}" '{number:1,url:"u",title:"t",headRefOid:"h",state:"CLOSED",statusCheckRollup:[
+        {name:"DCO",status:"COMPLETED",conclusion:"SUCCESS"},{name:"gate",status:$st,conclusion:$g},
+        {name:"security-fast",status:"COMPLETED",conclusion:"SUCCESS"},{name:"test-integrity",status:"COMPLETED",conclusion:"SUCCESS"}]}'; }
+  check() { local got; got="$(mk "$2" "${3:-COMPLETED}" | jq -r --argjson exp "$4" --argjson want "$want" "$B_FILTER | .result")"
+            [ "$got" = "$1" ] || { echo "selftest: $5: expected $1, got $got"; bad=1; }; }
+  check pass SUCCESS COMPLETED '[]' "all green, none expected"
+  check pass FAILURE COMPLETED '["gate"]' "expected failure"
+  check fail CANCELLED COMPLETED '[]' "cancelled gate, none expected"
+  check fail TIMED_OUT COMPLETED '[]' "timed-out gate, none expected"
+  check fail CANCELLED COMPLETED '["gate"]' "cancelled gate where a failure was expected"
+  check fail SKIPPED COMPLETED '[]' "skipped gate"
+  check fail "" IN_PROGRESS '[]' "gate still running"
+  check fail FAILURE COMPLETED '[]' "unexpected failure"
+  [ $bad -eq 0 ] && echo "selftest B: ok (8 cases)"; return $bad
+}
+
 WHICH=("$@"); [ ${#WHICH[@]} -eq 0 ] && WHICH=(a b c d)
 want() { for w in "${WHICH[@]}"; do [ "$w" = "$1" ] && return 0; done; return 1; }
 mkdir -p "$OUT"/{a,b,c,d}
 RESULTS=()
+
+# Verdict for one canary PR (input: gh pr view JSON). Every required check must be present, completed, and either
+# SUCCESS or exactly an expected FAILURE; CANCELLED, TIMED_OUT, SKIPPED or anything else is not a pass.
+B_FILTER='{pr:.number,url,title,head:.headRefOid,state,expected_failing_checks:($exp|sort),
+  checks:[.statusCheckRollup[]|select(.name|IN($want[]))|{name,status,conclusion}]}
+  | . + {incomplete_or_missing:($want - [.checks[]|select(.status=="COMPLETED" and ((.conclusion//"")|length)>0)|.name])}
+  | . + {not_success:([.checks[]|select(.conclusion!="SUCCESS")|.name]|sort)}
+  | . + {unexpected_conclusions:([.checks[]|select(.conclusion!="SUCCESS" and .conclusion!="FAILURE")|{name,conclusion}])}
+  | . + {failed_checks:([.checks[]|select(.conclusion=="FAILURE")|.name]|sort)}
+  | . + {result:(if .incomplete_or_missing==[] and (.unexpected_conclusions|length)==0 and .not_success==.expected_failing_checks and .state!="MERGED" then "pass" else "fail" end)}'
 
 # ---------------------------------------------------------------- Scenario A: the delivered app works
 scenario_a() {
@@ -104,12 +134,7 @@ scenario_b() {
   for pair in '6:[]' '7:["test-integrity"]' '8:["gate","test-integrity"]' '9:["gate"]' '10:["DCO"]'; do
     n="${pair%%:*}"; exp="${pair#*:}"
     C="$(jq --argjson p "$(gh pr view "$n" --repo "$REPO" --json number,title,url,state,headRefOid,statusCheckRollup |
-      jq --argjson exp "$exp" --argjson want "$WANT" '{pr:.number,url,title,head:.headRefOid,state,expected_failing_checks:($exp|sort),
-        checks:[.statusCheckRollup[]|select(.name|IN($want[]))|{name,status,conclusion}]}
-        # every required check must be present with a completed, non-empty conclusion before failures are compared
-        | . + {incomplete_or_missing:($want - [.checks[]|select(.status=="COMPLETED" and ((.conclusion//"")|length)>0)|.name])}
-        | . + {failed_checks:([.checks[]|select(.conclusion=="FAILURE")|.name]|sort)}
-        | . + {result:(if .incomplete_or_missing==[] and .failed_checks==.expected_failing_checks and .state!="MERGED" then "pass" else "fail" end)}')" '. + [$p]' <<<"$C")"
+      jq --argjson exp "$exp" --argjson want "$WANT" "$B_FILTER")" '. + [$p]' <<<"$C")"
   done
   jq -n --arg at "$(NOW)" --arg repo "$REPO" --argjson req "$REQ" --argjson reqok "$REQ_OK" --argjson want "$WANT" --argjson c "$C" \
     '{schema:"task-management.scenario-evidence/v1",scenario:"B",recorded_at:$at,repository:$repo,
@@ -183,6 +208,7 @@ scenario_d() {
   RESULTS+=("D $(jq -r .result "$D/scenario-d.json")")
 }
 
+[ "${1:-}" = selftest ] && { selftest_b; exit $?; }
 want a && scenario_a
 want b && scenario_b
 want c && scenario_c

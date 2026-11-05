@@ -1,12 +1,12 @@
-# Scenario A demo 2026-11-05T08:14:24Z commit=23ba2edfb0e143739428a5fbd375dc9f5d68a3db node=v24.11.0
+# Scenario A demo 2026-11-05T08:18:53Z commit=293b19a63f950945faf0facb6a9ba4e5a7726929 node=v24.11.0
 $ curl -X POST localhost:3917/tasks -H content-type: application/json -d {"title":"Write the demo"}
-{"id":"8c442ca6-6069-4b2a-9b2f-27dd7106fbdb","title":"Write the demo","status":"todo","createdAt":"2026-11-05T08:14:24.353Z","updatedAt":"2026-11-05T08:14:24.353Z"} [HTTP 201]
+{"id":"a47daab4-0458-46cc-be8a-fc826c7cee7e","title":"Write the demo","status":"todo","createdAt":"2026-11-05T08:18:53.952Z","updatedAt":"2026-11-05T08:18:53.952Z"} [HTTP 201]
 $ curl -X POST localhost:3917/tasks -H content-type: application/json -d {"title":"Review the plan"}
-{"id":"ea679b4c-a4e0-43df-bbc4-a9de00347337","title":"Review the plan","status":"todo","createdAt":"2026-11-05T08:14:24.386Z","updatedAt":"2026-11-05T08:14:24.386Z"} [HTTP 201]
+{"id":"e18ed358-b271-477a-bbbf-5e02552e672b","title":"Review the plan","status":"todo","createdAt":"2026-11-05T08:18:53.983Z","updatedAt":"2026-11-05T08:18:53.983Z"} [HTTP 201]
 $ curl localhost:3917/tasks
-[{"id":"8c442ca6-6069-4b2a-9b2f-27dd7106fbdb","title":"Write the demo","status":"todo","createdAt":"2026-11-05T08:14:24.353Z","updatedAt":"2026-11-05T08:14:24.353Z"},{"id":"ea679b4c-a4e0-43df-bbc4-a9de00347337","title":"Review the plan","status":"todo","createdAt":"2026-11-05T08:14:24.386Z","updatedAt":"2026-11-05T08:14:24.386Z"}] [HTTP 200]
-$ curl -X PATCH localhost:3917/tasks/8c442ca6-6069-4b2a-9b2f-27dd7106fbdb/status -H content-type: application/json -d {"status":"done"}
-{"id":"8c442ca6-6069-4b2a-9b2f-27dd7106fbdb","title":"Write the demo","status":"done","createdAt":"2026-11-05T08:14:24.353Z","updatedAt":"2026-11-05T08:14:24.435Z"} [HTTP 200]
+[{"id":"a47daab4-0458-46cc-be8a-fc826c7cee7e","title":"Write the demo","status":"todo","createdAt":"2026-11-05T08:18:53.952Z","updatedAt":"2026-11-05T08:18:53.952Z"},{"id":"e18ed358-b271-477a-bbbf-5e02552e672b","title":"Review the plan","status":"todo","createdAt":"2026-11-05T08:18:53.983Z","updatedAt":"2026-11-05T08:18:53.983Z"}] [HTTP 200]
+$ curl -X PATCH localhost:3917/tasks/a47daab4-0458-46cc-be8a-fc826c7cee7e/status -H content-type: application/json -d {"status":"done"}
+{"id":"a47daab4-0458-46cc-be8a-fc826c7cee7e","title":"Write the demo","status":"done","createdAt":"2026-11-05T08:18:53.952Z","updatedAt":"2026-11-05T08:18:54.028Z"} [HTTP 200]
 --- error cases
 $ curl -X POST localhost:3917/tasks -H content-type: application/json -d {"title":""}
 {"error":"title must not be blank"} [HTTP 400]
@@ -16,9 +16,9 @@ $ curl -X DELETE localhost:3917/tasks
 {"error":"method not allowed; use GET, POST"} [HTTP 405]
 --- restart the server and list again (persistence)
 $ curl localhost:3917/tasks
-[{"id":"8c442ca6-6069-4b2a-9b2f-27dd7106fbdb","title":"Write the demo","status":"done","createdAt":"2026-11-05T08:14:24.353Z","updatedAt":"2026-11-05T08:14:24.435Z"},{"id":"ea679b4c-a4e0-43df-bbc4-a9de00347337","title":"Review the plan","status":"todo","createdAt":"2026-11-05T08:14:24.386Z","updatedAt":"2026-11-05T08:14:24.386Z"}] [HTTP 200]
+[{"id":"a47daab4-0458-46cc-be8a-fc826c7cee7e","title":"Write the demo","status":"done","createdAt":"2026-11-05T08:18:53.952Z","updatedAt":"2026-11-05T08:18:54.028Z"},{"id":"e18ed358-b271-477a-bbbf-5e02552e672b","title":"Review the plan","status":"todo","createdAt":"2026-11-05T08:18:53.983Z","updatedAt":"2026-11-05T08:18:53.983Z"}] [HTTP 200]
 --- automated tests
-# tests 325
-# pass 325
+# tests 331
+# pass 331
 # fail 0
 # skipped 0

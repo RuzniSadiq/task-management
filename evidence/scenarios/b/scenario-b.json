@@ -1,7 +1,7 @@
 {
   "schema": "task-management.scenario-evidence/v1",
   "scenario": "B",
-  "recorded_at": "2026-11-05T08:12:55Z",
+  "recorded_at": "2026-11-05T08:19:08Z",
   "repository": "RuzniSadiq/task-management",
   "rule": "Branch protection on main requires these checks; a PR with a failing required check cannot merge",
   "required_checks": {
@@ -50,6 +50,8 @@
         }
       ],
       "incomplete_or_missing": [],
+      "not_success": [],
+      "unexpected_conclusions": [],
       "failed_checks": [],
       "result": "pass"
     },
@@ -85,6 +87,10 @@
         }
       ],
       "incomplete_or_missing": [],
+      "not_success": [
+        "test-integrity"
+      ],
+      "unexpected_conclusions": [],
       "failed_checks": [
         "test-integrity"
       ],
@@ -123,6 +129,11 @@
         }
       ],
       "incomplete_or_missing": [],
+      "not_success": [
+        "gate",
+        "test-integrity"
+      ],
+      "unexpected_conclusions": [],
       "failed_checks": [
         "gate",
         "test-integrity"
@@ -161,6 +172,10 @@
         }
       ],
       "incomplete_or_missing": [],
+      "not_success": [
+        "gate"
+      ],
+      "unexpected_conclusions": [],
       "failed_checks": [
         "gate"
       ],
@@ -198,6 +213,10 @@
         }
       ],
       "incomplete_or_missing": [],
+      "not_success": [
+        "DCO"
+      ],
+      "unexpected_conclusions": [],
       "failed_checks": [
         "DCO"
       ],

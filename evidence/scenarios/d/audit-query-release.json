@@ -5,9 +5,73 @@
     "commit": "69671140ea146a91059ad5f38f5d293120ff0f98",
     "tag": "v0.1.0"
   },
-  "change": null,
-  "approval": null,
-  "checks": null,
+  "change": {
+    "pr": 39,
+    "head_sha": "a01f38446b4c49bbab04f234134866093fe58773",
+    "merge_sha": "69671140ea146a91059ad5f38f5d293120ff0f98",
+    "merged_at": "2026-11-04T19:45:51Z",
+    "author": "RuzniSadiq",
+    "author_vendor": "claude",
+    "merged_via_pr": "pass",
+    "vendor_declared": "pass"
+  },
+  "approval": {
+    "reviewer": "ruzni-reviewer",
+    "reviewer_vendor": "codex",
+    "independent_approval_at_head": "pass",
+    "vendor_separation": "pass",
+    "independent": true,
+    "reasons": []
+  },
+  "checks": {
+    "head_sha": "a01f38446b4c49bbab04f234134866093fe58773",
+    "result": "pass",
+    "passed": [
+      "DCO",
+      "gate",
+      "security-fast",
+      "test-integrity"
+    ],
+    "conclusions": {
+      "gate": "success",
+      "security-fast": "success",
+      "test-integrity": "success",
+      "DCO": "success"
+    },
+    "failure_reasons": [],
+    "controls": [
+      {
+        "id": "SDLC-SEC-008",
+        "check": "merged-via-pr",
+        "result": "pass"
+      },
+      {
+        "id": "SDLC-SEC-008",
+        "check": "independent-approval-at-head",
+        "result": "pass"
+      },
+      {
+        "id": "RC-005",
+        "check": "required-checks-green",
+        "result": "pass"
+      },
+      {
+        "id": "MI-21",
+        "check": "dco-signoff",
+        "result": "pass"
+      },
+      {
+        "id": "MI-4",
+        "check": "agent-vendor-trailer",
+        "result": "pass"
+      },
+      {
+        "id": "MI-4",
+        "check": "vendor-separation",
+        "result": "pass"
+      }
+    ]
+  },
   "release": {
     "tag": "v0.1.0",
     "commit": "69671140ea146a91059ad5f38f5d293120ff0f98",
@@ -30,7 +94,7 @@
   "verification": {
     "reverified": true,
     "result": "pass",
-    "recorded_at": "2026-11-05T08:13:26.145Z",
+    "recorded_at": "2026-11-05T08:19:41.655Z",
     "since_release": true,
     "source": "verify-release-evidence.json"
   },

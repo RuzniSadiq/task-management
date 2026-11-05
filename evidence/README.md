@@ -69,7 +69,8 @@ Needs node >= 22.18, `gh` (authenticated, read access), `jq` and `curl`. It writ
   reviews that delivered it.
 - **B** reads GitHub's recorded check results for the canary PRs (#6 clean, #7 deleted test, #8 skipped
   test, #9 failing assertion, #10 unsigned commit). Each must have failed exactly its expected set of required checks (no more, no fewer; #8 trips both
-  `gate` and `test-integrity`) and none may have merged. Every required check must be present with a completed conclusion first. Scenario B fails if the live required checks of `main`
+  `gate` and `test-integrity`) and none may have merged. Every required check must be present with a completed conclusion first. `evidence/run-scenarios.sh selftest` checks that logic against synthetic canaries (cancelled, timed-out, skipped,
+  still-running and unexpected-failure checks must all fail). Scenario B fails if the live required checks of `main`
   cannot be read or differ from `.gibson-delivery.json`.
   The agent-privilege proofs (refused direct push, refused token, repo-boundary guard) are
   `P2-agent-least-privilege.json`.
