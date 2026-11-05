@@ -238,7 +238,7 @@ test("dedupe across runs: second failing run comments on the issue the first run
   assert.deepEqual(second.comments.map((c) => c.issue), [100]);
 });
 
-test("one finding per failing release; drafts and asset-less releases are skipped and recorded", () => {
+test("one finding per failing release; drafts are skipped and recorded, a published asset-less release fails", () => {
   const f = fakeGh([
     release("v0.2.0", published(EVIL)),
     release("v0.1.0", published()),
@@ -246,9 +246,9 @@ test("one finding per failing release; drafts and asset-less releases are skippe
     release("v0.0.1", {}),
   ]);
   const e = verifyAll(f.gh, opts);
-  assert.deepEqual(e.releases.map((r) => [r.tag, r.result]), [["v0.2.0", "fail"], ["v0.1.0", "pass"]]);
-  assert.deepEqual(e.skipped, [{ tag: "v0.3.0", reason: "draft (not published)" }, { tag: "v0.0.1", reason: "serves no assets" }]);
-  assert.deepEqual(f.created.map((c) => c.title), [findingTitle("v0.2.0")]);
+  assert.deepEqual(e.releases.map((r) => [r.tag, r.result]), [["v0.2.0", "fail"], ["v0.1.0", "pass"], ["v0.0.1", "fail"]]);
+  assert.deepEqual(e.skipped, [{ tag: "v0.3.0", reason: "draft (not published)" }]);
+  assert.deepEqual(f.created.map((c) => c.title), [findingTitle("v0.2.0"), findingTitle("v0.0.1")]);
   assert.equal(e.result, "fail");
 });
 
@@ -671,4 +671,22 @@ test("#45 CLI: an attestation for another tag (replay) fails via real gh exit st
   const r = runCli({ attestedRef: "refs/tags/v0.0.9" });
   assert.equal(r.status, 1);
   assert.equal(r.evidence?.releases[0]?.artefacts[0]?.attestation, "fail");
+});
+
+test("#46 a published release with zero assets fails, with a finding and the reason recorded", () => {
+  const f = fakeGh([release("v0.1.0", {})]);
+  const e = verifyAll(f.gh, opts);
+  assert.equal(e.result, "fail");
+  assert.deepEqual(e.skipped, []);
+  const r = e.releases[0];
+  assert.equal(r?.result, "fail");
+  assert.ok(r.reasons.includes("release serves no artefact besides its records"));
+  assert.deepEqual(f.created.map((c) => c.title), [findingTitle("v0.1.0")]);
+  assert.equal(control(e, "OP-007"), "fail");
+});
+
+test("#46 a draft with zero assets is still only skipped", () => {
+  const e = verifyAll(fakeGh([release("v0.1.0", {}, true)]).gh, opts);
+  assert.equal(e.result, "pass");
+  assert.deepEqual(e.skipped, [{ tag: "v0.1.0", reason: "draft (not published)" }]);
 });

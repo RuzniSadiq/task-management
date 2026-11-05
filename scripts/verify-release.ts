@@ -85,7 +85,7 @@ export interface Evidence {
   /** Set when the run could not list releases; `releases` is then empty and the result is fail. */
   error?: string;
   releases: ReleaseResult[];
-  /** Releases not verified, and why (drafts; releases that serve no asset). */
+  /** Releases not verified, and why (drafts only). */
   skipped: { tag: string; reason: string }[];
   findings: Finding[];
   controls: { id: string; catalog?: string; version?: string; name: string; result: Result; evidence: string }[];
@@ -245,10 +245,10 @@ export function verifyAll(gh: Gh, opts: Options): Evidence {
 
   const skipped: Evidence["skipped"] = [];
   const toVerify = (listed ?? []).filter((r) => {
-    if (r.draft) skipped.push({ tag: r.tag, reason: "draft (not published)" });
-    else if (r.assets.length === 0) skipped.push({ tag: r.tag, reason: "serves no assets" });
-    else return true;
-    return false;
+    // Only drafts are skipped. A published release with no assets is never legitimate (release.yml always
+    // attaches the tarball, SHA256SUMS and release-evidence.json), so verifyRelease fails it and a finding is filed.
+    if (r.draft) { skipped.push({ tag: r.tag, reason: "draft (not published)" }); return false; }
+    return true;
   });
   // Verify everything first; writing findings comes after, so its failures cannot lose these results.
   const results = toVerify.map((r) => verifyRelease(gh, r));
