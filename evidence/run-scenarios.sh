@@ -74,22 +74,26 @@ scenario_a() {
 # ---------------------------------------------------------------- Scenario B: preventative controls block
 scenario_b() {
   local B="$OUT/b" C='[]' n exp
-  local REQ; REQ="$(gh api "repos/$REPO/branches/main/protection/required_status_checks" --jq '.contexts' 2>/dev/null || echo '[]')"
-  for pair in "6:none" "7:test-integrity" "8:test-integrity" "9:gate" "10:DCO"; do
-    n="${pair%%:*}"; exp="${pair##*:}"
+  # The rule under test: the checks branch protection requires, read live and compared to the declared policy.
+  local REQ REQ_OK=false WANT
+  WANT="$(jq -c '.requiredContexts|sort' .gibson-delivery.json)"
+  if REQ="$(gh api "repos/$REPO/branches/main/protection/required_status_checks" --jq '.contexts' 2>/dev/null)" \
+     && [ "$(jq -c 'sort' <<<"$REQ")" = "$WANT" ]; then REQ_OK=true; else REQ="${REQ:-[]}"; fi
+  # PR number : exact set of required checks that must fail (a canary may trip more than its named rule)
+  for pair in '6:[]' '7:["test-integrity"]' '8:["gate","test-integrity"]' '9:["gate"]' '10:["DCO"]'; do
+    n="${pair%%:*}"; exp="${pair#*:}"
     C="$(jq --argjson p "$(gh pr view "$n" --repo "$REPO" --json number,title,url,state,headRefOid,statusCheckRollup |
-      jq --arg exp "$exp" '{pr:.number,url,title,head:.headRefOid,state,expected_blocking_rule:$exp,
+      jq --argjson exp "$exp" '{pr:.number,url,title,head:.headRefOid,state,expected_failing_checks:($exp|sort),
         checks:[.statusCheckRollup[]|select(.name|IN("gate","test-integrity","DCO","security-fast"))|{name,conclusion}]}
-        | . + {blocked_by:([.checks[]|select(.conclusion=="FAILURE")|.name])}
-        | . + {result:(if $exp=="none" then (if (.blocked_by|length)==0 then "pass" else "fail" end)
-                       else (if ((.blocked_by|index($exp))!=null and .state!="MERGED") then "pass" else "fail" end) end)}')" '. + [$p]' <<<"$C")"
+        | . + {failed_checks:([.checks[]|select(.conclusion=="FAILURE")|.name]|sort)}
+        | . + {result:(if .failed_checks==.expected_failing_checks and .state!="MERGED" then "pass" else "fail" end)}')" '. + [$p]' <<<"$C")"
   done
-  jq -n --arg at "$(NOW)" --arg repo "$REPO" --argjson req "$REQ" --argjson c "$C" \
+  jq -n --arg at "$(NOW)" --arg repo "$REPO" --argjson req "$REQ" --argjson reqok "$REQ_OK" --argjson want "$WANT" --argjson c "$C" \
     '{schema:"task-management.scenario-evidence/v1",scenario:"B",recorded_at:$at,repository:$repo,
       rule:"Branch protection on main requires these checks; a PR with a failing required check cannot merge",
-      required_checks:$req,controlled_failures:$c,
+      required_checks:{live:$req,declared:$want,match:$reqok},controlled_failures:$c,
       related:["evidence/P2-agent-least-privilege.json (direct push refused, restricted token refused, repo-boundary guard)"],
-      result:(if ($c|all(.result=="pass")) then "pass" else "fail" end)}' > "$B/scenario-b.json"
+      result:(if $reqok and ($c|length)==5 and ($c|all(.result=="pass")) then "pass" else "fail" end)}' > "$B/scenario-b.json"
   RESULTS+=("B $(jq -r .result "$B/scenario-b.json")")
 }
 

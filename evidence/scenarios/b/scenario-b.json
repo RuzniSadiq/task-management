@@ -1,15 +1,24 @@
 {
   "schema": "task-management.scenario-evidence/v1",
   "scenario": "B",
-  "recorded_at": "2026-11-05T07:24:10Z",
+  "recorded_at": "2026-11-05T07:50:26Z",
   "repository": "RuzniSadiq/task-management",
   "rule": "Branch protection on main requires these checks; a PR with a failing required check cannot merge",
-  "required_checks": [
-    "gate",
-    "security-fast",
-    "test-integrity",
-    "DCO"
-  ],
+  "required_checks": {
+    "live": [
+      "gate",
+      "security-fast",
+      "test-integrity",
+      "DCO"
+    ],
+    "declared": [
+      "DCO",
+      "gate",
+      "security-fast",
+      "test-integrity"
+    ],
+    "match": true
+  },
   "controlled_failures": [
     {
       "pr": 6,
@@ -17,7 +26,7 @@
       "title": "canary 1 (DO NOT MERGE): no change — all checks should pass",
       "head": "13318062fbbd93b75f4c440b9ee10bc3566a0650",
       "state": "CLOSED",
-      "expected_blocking_rule": "none",
+      "expected_failing_checks": [],
       "checks": [
         {
           "name": "DCO",
@@ -36,7 +45,7 @@
           "conclusion": "SUCCESS"
         }
       ],
-      "blocked_by": [],
+      "failed_checks": [],
       "result": "pass"
     },
     {
@@ -45,7 +54,9 @@
       "title": "canary 2 (DO NOT MERGE): deleted test — test-integrity should fail",
       "head": "05483405f424c1b027c2963ce3c11c8df004af33",
       "state": "CLOSED",
-      "expected_blocking_rule": "test-integrity",
+      "expected_failing_checks": [
+        "test-integrity"
+      ],
       "checks": [
         {
           "name": "DCO",
@@ -64,7 +75,7 @@
           "conclusion": "FAILURE"
         }
       ],
-      "blocked_by": [
+      "failed_checks": [
         "test-integrity"
       ],
       "result": "pass"
@@ -75,7 +86,10 @@
       "title": "canary 3 (DO NOT MERGE): skipped test — test-integrity should fail",
       "head": "84ec0a8ebad7b80085a83678eada4ab007bcd162",
       "state": "CLOSED",
-      "expected_blocking_rule": "test-integrity",
+      "expected_failing_checks": [
+        "gate",
+        "test-integrity"
+      ],
       "checks": [
         {
           "name": "gate",
@@ -94,7 +108,7 @@
           "conclusion": "FAILURE"
         }
       ],
-      "blocked_by": [
+      "failed_checks": [
         "gate",
         "test-integrity"
       ],
@@ -106,7 +120,9 @@
       "title": "canary 4 (DO NOT MERGE): failing assertion — gate should fail",
       "head": "2edde103345d6444a4e1e3cb5cb94ee161148471",
       "state": "CLOSED",
-      "expected_blocking_rule": "gate",
+      "expected_failing_checks": [
+        "gate"
+      ],
       "checks": [
         {
           "name": "gate",
@@ -125,7 +141,7 @@
           "conclusion": "SUCCESS"
         }
       ],
-      "blocked_by": [
+      "failed_checks": [
         "gate"
       ],
       "result": "pass"
@@ -136,7 +152,9 @@
       "title": "canary 5 (DO NOT MERGE): unsigned commit — DCO should fail",
       "head": "a2fb8057e6757679c49627bec58b204af6944927",
       "state": "CLOSED",
-      "expected_blocking_rule": "DCO",
+      "expected_failing_checks": [
+        "DCO"
+      ],
       "checks": [
         {
           "name": "DCO",
@@ -155,7 +173,7 @@
           "conclusion": "SUCCESS"
         }
       ],
-      "blocked_by": [
+      "failed_checks": [
         "DCO"
       ],
       "result": "pass"
