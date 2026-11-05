@@ -1,0 +1,61 @@
+# Detective control over the delivery process (issue #41). Branch protection and the review lane are
+# the preventive side; this re-checks, from GitHub's records, that every PR merged into main had the
+# reviewer identity's approval at the exact head SHA, green required checks, DCO sign-off, exactly
+# one Agent-Vendor per commit and a reviewer vendor different from the author's; that main's live
+# branch protection still equals .gibson-delivery.json; and that no commit reached main by direct push.
+#
+# FINOS controls (logic in scripts/control-audit.ts): SDLC-SEC-008, RC-005, AIGF MI-21, AIGF MI-4.
+# Evidence: control-evidence.jsonl (task-management.control-evidence/v1), uploaded as the
+# control-evidence artifact. A violation opens or refreshes one `control-finding` issue.
+#
+# Reading branch protection needs administration:read, which GITHUB_TOKEN cannot be granted. Add a
+# fine-grained token as the CONTROL_AUDIT_TOKEN secret (Administration read, Pull requests read,
+# Issues write, Contents read); without it the protection check fails closed and says why.
+# Setting that secret is a human step.
+name: control-audit
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: control-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: audit
+    # workflow_dispatch can pick any branch; this job holds an issues-write token and possibly the
+    # CONTROL_AUDIT_TOKEN secret, so it must only ever run the script as it is on main.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      # Node builtins only, run from source via type stripping: no npm install needed.
+      # --since: PR #30 (2026-11-04T15:50Z) is the first PR merged under the Gibson rules; earlier PRs
+      # predate the Agent-Vendor, approval and gate rules and would fail forever.
+      - name: Audit merged PRs, branch protection and direct pushes
+        env:
+          GH_TOKEN: ${{ secrets.CONTROL_AUDIT_TOKEN || github.token }}
+        run: node scripts/control-audit.ts --repo "$GITHUB_REPOSITORY" --since 2026-11-04T15:00:00Z --out control-evidence.jsonl
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: control-evidence
+          path: control-evidence.jsonl
+          if-no-files-found: error
