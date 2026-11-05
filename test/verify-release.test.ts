@@ -26,12 +26,12 @@ function release(tag: string, files: Files, draft = false): { info: ReleaseInfo;
 }
 
 const sumsFor = (b: Buffer, name = TARBALL): Buffer => Buffer.from(`${sha256(b)}  ${name}\n`);
-const evidenceFor = (b: Buffer, name = TARBALL): Buffer => Buffer.from(JSON.stringify({ schema: SCHEMA, event: "release.published", artefact: { name, sha256: sha256(b), tag: "v0.1.0" } }));
+const evidenceFor = (b: Buffer, name = TARBALL, tag = "v0.1.0"): Buffer => Buffer.from(JSON.stringify({ schema: SCHEMA, event: "release.published", artefact: { name, sha256: sha256(b), tag } }));
 
 /** The assets release.yml publishes, built from the approved bytes. */
 const published = (served: Buffer = GOOD): Files => ({ [TARBALL]: served, [SUMS_ASSET]: sumsFor(GOOD), [EVIDENCE_ASSET]: evidenceFor(GOOD) });
 
-interface Opts { attested?: Set<string>; open?: Issue[]; downloadFails?: Set<string> }
+interface Opts { attested?: Set<string>; attestedTag?: string; open?: Issue[]; downloadFails?: Set<string> }
 
 function fakeGh(releases: ReturnType<typeof release>[], o: Opts = {}) {
   const attested = o.attested ?? new Set([sha256(GOOD)]);
@@ -39,6 +39,7 @@ function fakeGh(releases: ReturnType<typeof release>[], o: Opts = {}) {
   const created: { title: string; body: string }[] = [];
   const comments: { issue: number; body: string }[] = [];
   const attestCalls: string[] = [];
+  const attestTags: string[] = [];
   let labelEnsured = 0;
   let next = 100;
   const gh: Gh = {
@@ -48,13 +49,17 @@ function fakeGh(releases: ReturnType<typeof release>[], o: Opts = {}) {
       for (const r of releases) { const b = r.bytes.get(asset.id); if (b !== undefined) return b; }
       throw new Error(`no asset ${asset.id}`);
     },
-    attest: (name, bytes) => { attestCalls.push(name); return attested.has(sha256(bytes)) ? { ok: true, detail: "verified" } : { ok: false, detail: "no matching attestations found" }; },
+    attest: (name, bytes, tag) => {
+      attestCalls.push(name); attestTags.push(tag);
+      const bound = o.attestedTag === undefined || o.attestedTag === tag;
+      return attested.has(sha256(bytes)) && bound ? { ok: true, detail: "verified" } : { ok: false, detail: "no matching attestations found" };
+    },
     ensureLabel: () => { labelEnsured++; },
     openFindings: () => [...open],
     createIssue: (title, body) => { const n = next++; created.push({ title, body }); open.push({ number: n, title }); return n; },
     comment: (issue, body) => { comments.push({ issue, body }); },
   };
-  return { gh, created, comments, attestCalls, labelEnsured: () => labelEnsured };
+  return { gh, created, comments, attestCalls, attestTags, labelEnsured: () => labelEnsured };
 }
 
 const only = (e: Evidence) => { const r = e.releases[0]; assert.ok(r); const a = r.artefacts[0]; assert.ok(a); return { r, a }; };
@@ -163,6 +168,35 @@ test("attestation failure alone fails the release with digests still passing", (
   assert.equal(control(e, "SDLC-PREV-003"), "fail");
   assert.equal(control(e, "SDLC-PREV-002"), "pass");
   assert.equal(f.created.length, 1);
+});
+
+test("#45 the attestation check is told the release tag", () => {
+  const f = fakeGh([release("v0.1.0", published())]);
+  verifyAll(f.gh, opts);
+  assert.deepEqual(f.attestTags, ["v0.1.0"]);
+});
+
+test("#45 replay: a genuine attestation issued for another tag does not verify this release", () => {
+  const files = { ...published(), [EVIDENCE_ASSET]: evidenceFor(GOOD, TARBALL, "v0.2.0") };
+  const f = fakeGh([release("v0.2.0", files)], { attestedTag: "v0.1.0" });
+  const e = verifyAll(f.gh, opts);
+  assert.equal(e.result, "fail");
+  assert.equal(only(e).a.attestation, "fail");
+  assert.equal(control(e, "SDLC-PREV-003"), "fail");
+});
+
+test("#45 release-evidence.json recording another release's tag fails the release", () => {
+  const f = fakeGh([release("v0.2.0", published())]);
+  const e = verifyAll(f.gh, opts);
+  assert.equal(e.result, "fail");
+  assert.deepEqual(only(e).r.reasons, [`${EVIDENCE_ASSET} records tag v0.1.0, but this release is v0.2.0`]);
+});
+
+test("#45 release-evidence.json with no artefact.tag fails the release", () => {
+  const files = { ...published(), [EVIDENCE_ASSET]: Buffer.from(JSON.stringify({ artefact: { name: TARBALL, sha256: sha256(GOOD) } })) };
+  const e = verifyAll(fakeGh([release("v0.1.0", files)]).gh, opts);
+  assert.equal(e.result, "fail");
+  assert.deepEqual(only(e).r.reasons, [`${EVIDENCE_ASSET} records tag none, but this release is v0.1.0`]);
 });
 
 test("an attestation call that throws is a failure, not a crash", () => {
@@ -370,7 +404,7 @@ test("uppercase digests in SHA256SUMS and release-evidence.json still match", ()
   const files = {
     ...published(),
     [SUMS_ASSET]: Buffer.from(`${sha256(GOOD).toUpperCase()}  ${TARBALL}\n`),
-    [EVIDENCE_ASSET]: Buffer.from(JSON.stringify({ artefact: { name: TARBALL, sha256: sha256(GOOD).toUpperCase() } })),
+    [EVIDENCE_ASSET]: Buffer.from(JSON.stringify({ artefact: { name: TARBALL, sha256: sha256(GOOD).toUpperCase(), tag: "v0.1.0" } })),
   };
   assert.equal(verifyAll(fakeGh([release("v0.1.0", files)]).gh, opts).result, "pass");
 });
@@ -472,7 +506,9 @@ function main() {
   if (a[0] === "attestation" && a[1] === "verify") {
     log(null);
     const d = crypto.createHash("sha256").update(fs.readFileSync(a[2])).digest("hex");
-    if (st.attested.includes(d)) { process.stdout.write("Verification succeeded!\\n"); return 0; }
+    const flag = (n) => { const i = a.indexOf(n); return i < 0 ? undefined : a[i + 1]; };
+    const boundOk = flag("--signer-workflow") === st.attestedWorkflow && flag("--source-ref") === st.attestedRef && a.includes("--deny-self-hosted-runners");
+    if (st.attested.includes(d) && boundOk) { process.stdout.write("Verification succeeded!\\n"); return 0; }
     process.stderr.write("Error: no matching attestations found\\n");
     return 1;
   }
@@ -490,7 +526,7 @@ function main() {
 process.exitCode = main();
 `;
 
-interface CliState { failReleases?: boolean; failIssueWrites?: boolean; served?: Buffer; attested?: string[]; open?: Issue[] }
+interface CliState { failReleases?: boolean; failIssueWrites?: boolean; served?: Buffer; attested?: string[]; open?: Issue[]; attestedWorkflow?: string; attestedRef?: string }
 interface GhCall { args: string[]; stdin: string | null }
 
 function runCli(s: CliState, extra: string[] = []) {
@@ -505,6 +541,8 @@ function runCli(s: CliState, extra: string[] = []) {
       releases: [rel.info],
       assets,
       attested: s.attested ?? [sha256(GOOD)],
+      attestedWorkflow: s.attestedWorkflow ?? "o/r/.github/workflows/release.yml",
+      attestedRef: s.attestedRef ?? "refs/tags/v0.1.0",
       open: s.open ?? [],
     }));
     writeFileSync(join(dir, "gh"), FAKE_GH, { mode: 0o755 });
@@ -540,7 +578,8 @@ test("CLI clean pass: exit 0, evidence file written, no issue writes", () => {
   assert.equal(r.evidence.result, "pass");
   assert.deepEqual(r.evidence.run, { url: RUN_URL, attempt: "2" });
   assert.deepEqual(r.evidence.releases.map((x) => [x.tag, x.result]), [["v0.1.0", "pass"]]);
-  assert.deepEqual(r.calls.filter((c) => c.args[0] === "attestation").map((c) => c.args.slice(3)), [["--repo", "o/r"]]);
+  assert.deepEqual(r.calls.filter((c) => c.args[0] === "attestation").map((c) => c.args.slice(3)),
+    [["--repo", "o/r", "--signer-workflow", "o/r/.github/workflows/release.yml", "--source-ref", "refs/tags/v0.1.0", "--deny-self-hosted-runners"]]);
   assert.deepEqual(writes(r.calls), []);
   assert.match(r.stdout, /PASS v0\.1\.0/);
 });
@@ -620,4 +659,16 @@ test("N1 CLI --dry-run never comments, even when an open finding would match", (
   const r = runCli({ served: EVIL, open: [{ number: 77, title: findingTitle("v0.1.0") }] }, ["--dry-run"]);
   assert.equal(r.calls.filter((c) => c.args[0] === "issue" && c.args[1] === "comment").length, 0);
   assert.equal(r.calls.filter((c) => c.args[0] === "api" && /\/issues\?/.test(String(c.args[3]))).length, 0);
+});
+
+test("#45 CLI: an attestation from another workflow (minted on a branch) fails via real gh exit status", () => {
+  const r = runCli({ attestedWorkflow: "o/r/.github/workflows/evil.yml" });
+  assert.equal(r.status, 1);
+  assert.equal(r.evidence?.releases[0]?.artefacts[0]?.attestation, "fail");
+});
+
+test("#45 CLI: an attestation for another tag (replay) fails via real gh exit status", () => {
+  const r = runCli({ attestedRef: "refs/tags/v0.0.9" });
+  assert.equal(r.status, 1);
+  assert.equal(r.evidence?.releases[0]?.artefacts[0]?.attestation, "fail");
 });
