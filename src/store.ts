@@ -104,9 +104,14 @@ export class TaskStore {
     return new TaskStore(path, tasks, options.now ?? (() => new Date()));
   }
 
-  /** Every task, in creation order. Returned objects are copies. */
-  list(): Task[] {
-    return this.#tasks.map((task) => ({ ...task }));
+  /**
+   * Every task, in creation order. Returned objects are copies. With `status`
+   * given, only the tasks that have it; an invalid `status` throws
+   * ValidationError and never falls back to the unfiltered list.
+   */
+  list(status?: unknown): Task[] {
+    const wanted = status === undefined ? undefined : validateStatus(status);
+    return this.#tasks.filter((task) => wanted === undefined || task.status === wanted).map((task) => ({ ...task }));
   }
 
   /** Validates, persists, and returns a new task. */

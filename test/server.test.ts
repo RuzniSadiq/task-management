@@ -160,6 +160,101 @@ describe("AC2 GET /tasks", () => {
   });
 });
 
+describe("#77 GET /tasks?status=", () => {
+  async function seed(base: string): Promise<{ todo: Task; active: Task; done: Task; todo2: Task }> {
+    const todo = await createTask(base, { title: "a" });
+    const active = await createTask(base, { title: "b", status: "in_progress" });
+    const done = await createTask(base, { title: "c", status: "done" });
+    const todo2 = await createTask(base, { title: "d" });
+    return { todo, active, done, todo2 };
+  }
+
+  async function getList(base: string, query: string): Promise<Response> {
+    return fetch(`${base}/tasks${query}`);
+  }
+
+  test("AC1 no status parameter returns every task in creation order", async () => {
+    await withServer(async (base) => {
+      const { todo, active, done, todo2 } = await seed(base);
+      const response = await getList(base, "");
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), [todo, active, done, todo2]);
+    });
+  });
+
+  test("AC2 each valid status returns only matching tasks in creation order", async () => {
+    await withServer(async (base) => {
+      const { todo, active, done, todo2 } = await seed(base);
+      const expected: Record<string, Task[]> = {
+        todo: [todo, todo2],
+        in_progress: [active],
+        done: [done],
+      };
+      for (const [status, tasks] of Object.entries(expected)) {
+        const response = await getList(base, `?status=${status}`);
+        assert.equal(response.status, 200);
+        assert.match(response.headers.get("content-type") ?? "", /^application\/json\b/);
+        assert.deepEqual(await response.json(), tasks, status);
+      }
+    });
+  });
+
+  test("AC2 a valid status with no matching task returns 200 and []", async () => {
+    await withServer(async (base) => {
+      await createTask(base, { title: "only todo" });
+      const response = await getList(base, "?status=done");
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), []);
+    });
+  });
+
+  test("AC3 an invalid status returns 400 naming the allowed values, never the list", async () => {
+    await withServer(async (base) => {
+      await seed(base);
+      for (const query of ["?status=", "?status=Done", "?status=TODO", "?status=in-progress", "?status=blocked", "?status=%20todo"]) {
+        const message = await assertError(await getList(base, query), 400);
+        assert.match(message, /todo, in_progress, done/, query);
+      }
+    });
+  });
+
+  test("AC4 a repeated status returns 400", async () => {
+    await withServer(async (base) => {
+      await seed(base);
+      await assertError(await getList(base, "?status=todo&status=done"), 400);
+      await assertError(await getList(base, "?status=todo&status=todo"), 400);
+      await assertError(await getList(base, "?status=todo&status="), 400);
+    });
+  });
+
+  test("AC5 other query parameters are ignored; POST and PATCH are unchanged", async () => {
+    await withServer(async (base) => {
+      const { active, done } = await seed(base);
+      assert.deepEqual(await (await getList(base, "?x=1&status=done&sort=desc")).json(), [done]);
+      assert.equal((await getList(base, "?x=1")).status, 200);
+      const patched = await postJson(base, `/tasks/${active.id}/status`, { status: "done" }, "PATCH");
+      assert.equal(patched.status, 200);
+      assert.equal((await createTask(base, { title: "new" })).status, "todo");
+      // POST and PATCH ignore the query string's status.
+      const created = await postJson(base, "/tasks?status=bogus", { title: "q" });
+      assert.equal(created.status, 201);
+    });
+  });
+
+  test("AC6 a task moved by PATCH appears under its new status only", async () => {
+    await withServer(async (base) => {
+      const { todo } = await seed(base);
+      const patched = await postJson(base, `/tasks/${todo.id}/status`, { status: "done" }, "PATCH");
+      assert.equal(patched.status, 200);
+      const ids = async (status: string): Promise<string[]> =>
+        ((await (await getList(base, `?status=${status}`)).json()) as Task[]).map((task) => task.id);
+      assert.ok(!(await ids("todo")).includes(todo.id));
+      assert.ok((await ids("done")).includes(todo.id));
+      assert.ok(!(await ids("in_progress")).includes(todo.id));
+    });
+  });
+});
+
 describe("AC3 PATCH /tasks/:id/status", () => {
   test("returns 200 and the updated task; the list shows the change", async () => {
     await withServer(async (base) => {
