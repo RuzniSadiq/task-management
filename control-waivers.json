@@ -1,0 +1,89 @@
+{
+  "schema": "task-management.control-waivers/v1",
+  "waivers": [
+    {
+      "pr": 1,
+      "head": "d1a8984d5235f1a29609929336c1e4b31785e110",
+      "check": "independent-approval-at-head",
+      "rationale": "Adoption PR merged 2026-11-03 before the gate, branch protection and Agent-Vendor trailers existed; it has no reviewer verdict, no gate run and commits without a vendor trailer."
+    },
+    {
+      "pr": 1,
+      "head": "d1a8984d5235f1a29609929336c1e4b31785e110",
+      "check": "required-checks-green",
+      "rationale": "Adoption PR merged 2026-11-03 before the gate, branch protection and Agent-Vendor trailers existed; it has no reviewer verdict, no gate run and commits without a vendor trailer."
+    },
+    {
+      "pr": 1,
+      "head": "d1a8984d5235f1a29609929336c1e4b31785e110",
+      "check": "agent-vendor-trailer",
+      "rationale": "Adoption PR merged 2026-11-03 before the gate, branch protection and Agent-Vendor trailers existed; it has no reviewer verdict, no gate run and commits without a vendor trailer."
+    },
+    {
+      "pr": 1,
+      "head": "d1a8984d5235f1a29609929336c1e4b31785e110",
+      "check": "vendor-separation",
+      "rationale": "Adoption PR merged 2026-11-03 before the gate, branch protection and Agent-Vendor trailers existed; it has no reviewer verdict, no gate run and commits without a vendor trailer."
+    },
+    {
+      "pr": 3,
+      "head": "243722de66f2f67c2835deb15c7685b9dbd67af8",
+      "check": "agent-vendor-trailer",
+      "rationale": "Merged before the Agent-Vendor trailer convention was used in this repo; its commit carries no vendor, so author and reviewer vendor separation cannot be established. Approved by ruzni-reviewer at this head."
+    },
+    {
+      "pr": 3,
+      "head": "243722de66f2f67c2835deb15c7685b9dbd67af8",
+      "check": "vendor-separation",
+      "rationale": "Merged before the Agent-Vendor trailer convention was used in this repo; its commit carries no vendor, so author and reviewer vendor separation cannot be established. Approved by ruzni-reviewer at this head."
+    },
+    {
+      "pr": 5,
+      "head": "6e3c6bf3e3c2d82912e1fbb3f57a4f7ae05e6303",
+      "check": "agent-vendor-trailer",
+      "rationale": "Merged before the Agent-Vendor trailer convention was used in this repo; its commit carries no vendor, so author and reviewer vendor separation cannot be established. Approved by ruzni-reviewer at this head."
+    },
+    {
+      "pr": 5,
+      "head": "6e3c6bf3e3c2d82912e1fbb3f57a4f7ae05e6303",
+      "check": "vendor-separation",
+      "rationale": "Merged before the Agent-Vendor trailer convention was used in this repo; its commit carries no vendor, so author and reviewer vendor separation cannot be established. Approved by ruzni-reviewer at this head."
+    },
+    {
+      "pr": 12,
+      "head": "ba0c5df4ed0003b5640d3a4ad79aa890b66a7da8",
+      "check": "agent-vendor-trailer",
+      "rationale": "Merged before the Agent-Vendor trailer convention was used in this repo; its commit carries no vendor, so author and reviewer vendor separation cannot be established. Approved by ruzni-reviewer at this head."
+    },
+    {
+      "pr": 12,
+      "head": "ba0c5df4ed0003b5640d3a4ad79aa890b66a7da8",
+      "check": "vendor-separation",
+      "rationale": "Merged before the Agent-Vendor trailer convention was used in this repo; its commit carries no vendor, so author and reviewer vendor separation cannot be established. Approved by ruzni-reviewer at this head."
+    },
+    {
+      "pr": 13,
+      "head": "ed879f607e1794f934a92afd540fec10e5f56a49",
+      "check": "agent-vendor-trailer",
+      "rationale": "Merged before the Agent-Vendor trailer convention was used in this repo; its commit carries no vendor, so author and reviewer vendor separation cannot be established. Approved by ruzni-reviewer at this head."
+    },
+    {
+      "pr": 13,
+      "head": "ed879f607e1794f934a92afd540fec10e5f56a49",
+      "check": "vendor-separation",
+      "rationale": "Merged before the Agent-Vendor trailer convention was used in this repo; its commit carries no vendor, so author and reviewer vendor separation cannot be established. Approved by ruzni-reviewer at this head."
+    },
+    {
+      "pr": 23,
+      "head": "ac6741fc504d80f2318cc9cc3e9658976d9b8962",
+      "check": "vendor-separation",
+      "rationale": "Captain approval by ruzni-reviewer after the review-round cap; the approving review body has no '## Second opinion - <vendor>' declaration. Earlier rounds on this PR were second-opinion reviews by the same identity."
+    },
+    {
+      "pr": 48,
+      "head": "b59e45feefdf0d088f2f6efc6c3a75145700562f",
+      "check": "vendor-separation",
+      "rationale": "Captain approval by ruzni-reviewer after the review-round cap; the approving review body has no '## Second opinion - <vendor>' declaration. Earlier rounds on this PR were second-opinion reviews by the same identity."
+    }
+  ]
+}

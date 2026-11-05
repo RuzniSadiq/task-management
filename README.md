@@ -203,6 +203,23 @@ token for the agents they run (rules in `AGENTS.md` → "Agent credentials").
   applies to every credential: no direct push or force-push to `main`, and nothing
   merges without the required checks and an approval from `ruzni-reviewer`.
 
+## Control-audit waivers
+
+`scripts/control-audit.ts` re-checks every merged PR against the delivery controls and opens a
+`control-finding` issue for each violation. A violation that has been reviewed and accepted can be
+recorded in `control-waivers.json` (schema `task-management.control-waivers/v1`). Each waiver names
+one PR, its full 40-character head SHA, one check and a written rationale. There are no wildcards.
+
+- A waived failure stays `result: "fail"` in the JSONL evidence and carries the waiver, so it is
+  never rewritten as a pass. It opens no finding and does not turn the run red.
+- Any other failure (another check, another head SHA, another PR) still fails the run.
+- A missing file means no waivers. An unreadable or malformed file stops the run with exit code 2.
+- A waiver is approved by the pull request that adds it: branch protection requires the independent
+  review and the commit history records who merged it.
+- The scheduled workflow audits from `--since 2026-11-04T15:00:00Z` (see `control-audit.yml`). Running
+  with an earlier `--since` also reports the repository's root commit (`9bcce1f`, "chore: initialize
+  project"), which has no pull request because it created the history; that is not waived.
+
 ## Known limitations
 
 - **Agents run as the same OS user as the owner.** An agent process can in principle
