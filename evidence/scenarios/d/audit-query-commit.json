@@ -1,0 +1,83 @@
+{
+  "query": "575356479e3f15ac241731ce224abac0ad106204",
+  "found": true,
+  "resolved": {
+    "commit": "575356479e3f15ac241731ce224abac0ad106204",
+    "tag": null
+  },
+  "change": {
+    "pr": 62,
+    "head_sha": "575356479e3f15ac241731ce224abac0ad106204",
+    "merge_sha": "4a8ae33d9dcd0749d729e9acffeab6a2c6131d70",
+    "merged_at": "2026-11-05T07:17:16Z",
+    "author": "RuzniSadiq",
+    "author_vendor": "claude",
+    "merged_via_pr": "pass",
+    "vendor_declared": "pass"
+  },
+  "approval": {
+    "reviewer": "ruzni-reviewer",
+    "reviewer_vendor": "codex",
+    "independent_approval_at_head": "pass",
+    "vendor_separation": "pass",
+    "independent": true,
+    "reasons": []
+  },
+  "checks": {
+    "head_sha": "575356479e3f15ac241731ce224abac0ad106204",
+    "result": "pass",
+    "passed": [
+      "DCO",
+      "gate",
+      "security-fast",
+      "test-integrity"
+    ],
+    "conclusions": {
+      "gate": "success",
+      "security-fast": "success",
+      "test-integrity": "success",
+      "DCO": "success"
+    },
+    "failure_reasons": [],
+    "controls": [
+      {
+        "id": "SDLC-SEC-008",
+        "check": "merged-via-pr",
+        "result": "pass"
+      },
+      {
+        "id": "SDLC-SEC-008",
+        "check": "independent-approval-at-head",
+        "result": "pass"
+      },
+      {
+        "id": "RC-005",
+        "check": "required-checks-green",
+        "result": "pass"
+      },
+      {
+        "id": "MI-21",
+        "check": "dco-signoff",
+        "result": "pass"
+      },
+      {
+        "id": "MI-4",
+        "check": "agent-vendor-trailer",
+        "result": "pass"
+      },
+      {
+        "id": "MI-4",
+        "check": "vendor-separation",
+        "result": "pass"
+      }
+    ]
+  },
+  "release": null,
+  "verification": null,
+  "warnings": [],
+  "evidence_files": [
+    "control-evidence.jsonl",
+    "release-evidence.json",
+    "verify-release-evidence.json"
+  ]
+}
