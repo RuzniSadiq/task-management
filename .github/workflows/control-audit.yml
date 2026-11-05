@@ -47,10 +47,12 @@ jobs:
         with:
           node-version: 22
       # Node builtins only, run from source via type stripping: no npm install needed.
+      # --since: PR #30 (2026-11-04T15:50Z) is the first PR merged under the Gibson rules; earlier PRs
+      # predate the Agent-Vendor, approval and gate rules and would fail forever.
       - name: Audit merged PRs, branch protection and direct pushes
         env:
           GH_TOKEN: ${{ secrets.CONTROL_AUDIT_TOKEN || github.token }}
-        run: node scripts/control-audit.ts --repo "$GITHUB_REPOSITORY" --out control-evidence.jsonl
+        run: node scripts/control-audit.ts --repo "$GITHUB_REPOSITORY" --since 2026-11-04T15:00:00Z --out control-evidence.jsonl
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
