@@ -128,6 +128,21 @@ export interface Options { repo: string; run: Run; now: () => string; since: str
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e)).trim().split("\n")[0] ?? "";
 const SIGNED_OFF = /^Signed-off-by:[ \t]*\S.*<[^<>\s]+>[ \t]*$/m;
+const TRAILER_LINE = /^[A-Za-z][A-Za-z0-9-]*[ \t]*:[ \t]*\S/;
+/**
+ * The commit's trailer region: the run of paragraphs at the end of the message in which every line
+ * is `Key: value` (or an indented continuation), never including the subject paragraph. The Gibson
+ * reservation commit puts Agent-Vendor in a paragraph of its own ahead of the other trailers, so
+ * more than the last paragraph must count; but a `Signed-off-by:` or `Agent-Vendor:` line in or
+ * after ordinary prose is not a trailer, so a prose paragraph ends the region.
+ */
+export function trailerBlock(message: string): string {
+  const paras = message.replace(/\r\n?/g, "\n").trim().split(/\n[ \t]*\n/);
+  const isTrailers = (para: string): boolean => para.split("\n").every((l, i) => (i > 0 && /^[ \t]+\S/.test(l)) || TRAILER_LINE.test(l));
+  let start = paras.length;
+  while (start > 1 && isTrailers(paras[start - 1] ?? "")) start--;
+  return paras.slice(start).join("\n");
+}
 /** The lane's review report opens `## Second opinion — <vendor>`. */
 const REVIEWER_VENDOR_ALL = /^##[ \t]+Second opinion[ \t]*[—–-][ \t]*([A-Za-z]+)/gm;
 
@@ -197,8 +212,8 @@ export function evaluatePr(gh: Gh, pr: PrInfo, cfg: DeliveryConfig): { control: 
   let author: ReturnType<typeof authorVendor> | undefined;
   if (commits !== undefined) {
     if (commits.length === 0) { dcoReasons.push("pull request has no commits"); }
-    for (const c of commits) if (!SIGNED_OFF.test(c.message)) dcoReasons.push(`commit ${c.sha} has no Signed-off-by trailer`);
-    author = authorVendor(commits.map((c) => c.message));
+    for (const c of commits) if (!SIGNED_OFF.test(trailerBlock(c.message))) dcoReasons.push(`commit ${c.sha} has no Signed-off-by trailer`);
+    author = authorVendor(commits.map((c) => trailerBlock(c.message)));
     if ("reason" in author) trailerReasons.push(author.reason);
   }
   const commitRefs = (commits ?? []).map((c) => `commit ${c.sha}`);

@@ -221,6 +221,38 @@ test("an approving review declaring conflicting reviewer vendors fails vendor-se
   assert.match(failed(a)[0]?.reasons.join() ?? "", /conflicting reviewer vendors/);
 });
 
+test("Signed-off-by and Agent-Vendor lines in the message body, not the trailer block, do not count", () => {
+  const body = "feat: x\n\nSigned-off-by: A Dev <dev@example.com>\nAgent-Vendor: claude\n\nSome closing prose.";
+  const inProse = "feat: x\n\nNotes for the reader\nSigned-off-by: A Dev <dev@example.com>\nAgent-Vendor: claude";
+  const subjectOnly = "Signed-off-by: A Dev <dev@example.com>\nAgent-Vendor: claude";
+  const onlyDco = "feat: x\n\nAgent-Vendor: claude\n\nSome closing prose with Signed-off-by: A Dev <dev@example.com>";
+  const onlyVendor = "feat: x\n\nSigned-off-by: A Dev <dev@example.com>\n\nAgent-Vendor: claude in prose now.";
+  const results = new Map<string, string[]>();
+  [body, inProse, subjectOnly, onlyDco, onlyVendor].forEach((m, i) => {
+    const p = goodPr(50 + i);
+    p.commits = [{ sha: p.info.head, message: m }];
+    results.set(String(i), checksFailed(audit(fakeGh({ prs: [p] }).gh, opts), 50 + i).sort());
+  });
+  const both = ["agent-vendor-trailer", "dco-signoff", "vendor-separation"];
+  assert.deepEqual(results.get("0"), both);
+  assert.deepEqual(results.get("1"), both);
+  assert.deepEqual(results.get("2"), both);
+  assert.ok(results.get("3")?.includes("dco-signoff"));
+  assert.ok(results.get("4")?.includes("agent-vendor-trailer"));
+});
+
+test("the Gibson reservation commit (Agent-Vendor in its own paragraph before the other trailers) passes", () => {
+  const p = goodPr(56);
+  p.commits = [{ sha: p.info.head, message: "chore: reserve issue #41\n\nAgent-Vendor: claude\n\nGibson-Reservation: v1\nGibson-Issue: #41\nSigned-off-by: A Dev <dev@example.com>\n" }];
+  assert.deepEqual(checksFailed(audit(fakeGh({ prs: [p] }).gh, opts), 56), []);
+});
+
+test("a real trailer block passes, including CRLF messages and continuation lines", () => {
+  const p = goodPr(55);
+  p.commits = [{ sha: p.info.head, message: "feat: x\r\n\r\nbody text\r\n\r\nCo-Authored-By: B <b@example.com>\r\nAgent-Vendor: claude\r\nSigned-off-by: A Dev <dev@example.com>\r\n" }];
+  assert.deepEqual(checksFailed(audit(fakeGh({ prs: [p] }).gh, opts), 55), []);
+});
+
 test("an approving review that declares no reviewer vendor fails vendor-separation (fail closed)", () => {
   const p = goodPr(15);
   p.reviews = [{ user: { login: "ruzni-reviewer" }, state: "APPROVED", commit_id: p.info.head, body: "LGTM" }];
