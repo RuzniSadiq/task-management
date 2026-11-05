@@ -533,7 +533,7 @@ test("AC1: permissions are empty at workflow level and exactly contents/pull-req
 test("AC1/AC4: the audit token is the only secret used, and the evidence is always uploaded as an artifact", () => {
   assert.deepEqual(workflow.match(/secrets\.\w+/g), ["secrets.CONTROL_AUDIT_TOKEN"]);
   assert.match(workflow, /GH_TOKEN: \$\{\{ secrets\.CONTROL_AUDIT_TOKEN \|\| github\.token \}\}/);
-  assert.match(workflow, /run: node scripts\/control-audit\.ts --repo "\$GITHUB_REPOSITORY" --out control-evidence\.jsonl/);
+  assert.match(workflow, /run: node scripts\/control-audit\.ts --repo "\$GITHUB_REPOSITORY" --since 2026-11-04T15:00:00Z --out control-evidence\.jsonl/);
   assert.match(workflow, /- uses: actions\/upload-artifact@[0-9a-f]{40}[^\n]*\n {8}if: always\(\)\n {8}with:\n(?: {10}.*\n)*? {10}path: control-evidence\.jsonl\n/);
 });
 
@@ -649,6 +649,22 @@ test("a backdated commit pushed directly to main is still reported: the window i
   assert.equal(audit(old, opts).result, "pass");
   const bad: Gh = { ...g, branchPushes: () => [{ before: "b".repeat(40), after: "a".repeat(40), timestamp: "not a date" }] };
   assert.equal(audit(bad, opts).result, "fail");
+});
+
+test("a push with no common ancestor (force push / history rewrite) becomes a finding; other compare failures stay errors", () => {
+  const g = fakeGh({ prs: [] });
+  const push = { before: "d".repeat(40), after: "9".repeat(40), timestamp: "2026-11-03T01:00:00Z" };
+  const rewrite: Gh = { ...g.gh, branchPushes: () => [push], compare: () => { throw new Error("gh: No common ancestor between x and y. (HTTP 404)"); } };
+  const a = audit(rewrite, opts);
+  assert.deepEqual(a.errors, []);
+  assert.deepEqual(failed(a).map((r) => r.control.check), ["no-direct-push"]);
+  assert.match(failed(a)[0]?.reasons.join() ?? "", /no common ancestor.*force push or history rewrite/);
+  assert.deepEqual(a.findings.map((f) => f.action), ["created"]);
+  assert.equal(g.created[0]?.title, directPushFindingTitle(push.after));
+  const other: Gh = { ...g.gh, branchPushes: () => [push], compare: () => { throw new Error("HTTP 502"); } };
+  const b = audit(other, opts);
+  assert.equal(b.result, "fail");
+  assert.match(b.errors.join(), /could not list the commits of push.*502/);
 });
 
 test("CLI queries: merged PRs from the base branch, commits since the base date, protection by branch name", () => {

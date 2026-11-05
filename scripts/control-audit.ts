@@ -377,7 +377,18 @@ export function audit(gh: Gh, opts: Options): Audit {
       if (at < sinceMs) continue;
       try {
         for (const c of gh.compare(push.before, push.after)) if (!seen.has(c.sha)) { seen.add(c.sha); commits.push(c); }
-      } catch (e) { errors.push(`could not list the commits of push ${push.before.slice(0, 7)}..${push.after.slice(0, 7)}: ${errText(e)}`); }
+      } catch (e) {
+        const label = `${push.before.slice(0, 7)}..${push.after.slice(0, 7)}`;
+        if (/no common ancestor/i.test(errText(e))) {
+          // Unrelated histories: a force push or history rewrite. Its commits cannot be listed, and it
+          // is itself a control violation on a protected branch, so it is a finding, not a run error.
+          const rec = emit({ kind: "commit", ref: push.after, sha: push.after }, CONTROLS.directPush,
+            verdict([`push ${label} to ${cfg.defaultBranch} has no common ancestor with the previous tip (force push or history rewrite); its commits cannot be checked`],
+              [`push ${push.before}..${push.after}`]));
+          violations.push({ key: `direct-${push.after}`, title: directPushFindingTitle(push.after), failed: [rec],
+            heading: `Push \`${label}\` to \`${cfg.defaultBranch}\` replaced history (no common ancestor).` });
+        } else errors.push(`could not list the commits of push ${label}: ${errText(e)}`);
+      }
     }
   } catch (e) { errors.push(`could not list pushes to ${cfg.defaultBranch}: ${errText(e)}`); }
   for (const c of commits) {
