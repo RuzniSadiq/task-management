@@ -215,6 +215,30 @@ describe("AC4 list", () => {
     );
   });
 
+  test("#77 list(status) filters by status in creation order and reflects updates", async () => {
+    const store = await TaskStore.open(join(await freshDir(), "tasks.json"));
+    const a = await store.create({ title: "a" });
+    const b = await store.create({ title: "b", status: "done" });
+    const c = await store.create({ title: "c" });
+    assert.deepEqual(store.list("todo"), [a, c]);
+    assert.deepEqual(store.list("done"), [b]);
+    assert.deepEqual(store.list("in_progress"), []);
+    assert.equal(store.list(undefined).length, 3);
+    const moved = await store.updateStatus(a.id, "in_progress");
+    assert.deepEqual(store.list("todo"), [c]);
+    assert.deepEqual(store.list("in_progress"), [moved]);
+    store.list("done")[0]!.title = "changed";
+    assert.equal(store.list("done")[0]!.title, "b");
+  });
+
+  test("#77 list(status) rejects anything but the three statuses with ValidationError", async () => {
+    const store = await TaskStore.open(join(await freshDir(), "tasks.json"));
+    await store.create({ title: "a" });
+    for (const bad of ["", "Done", "TODO", "blocked", null, 3, ["todo"]]) {
+      assert.throws(() => store.list(bad), ValidationError, String(bad));
+    }
+  });
+
   test("concurrent creates are all kept, in call order", async () => {
     const path = join(await freshDir(), "tasks.json");
     const store = await TaskStore.open(path);

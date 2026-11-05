@@ -200,6 +200,17 @@ The response is `200 OK` with a JSON array of every task, oldest first.
 
     curl -i http://127.0.0.1:3000/tasks
 
+Add `?status=` to list only the tasks with that status: `todo`, `in_progress` or
+`done`. They stay oldest first, and no match gives `[]`.
+
+    curl -i 'http://127.0.0.1:3000/tasks?status=done'
+
+A `status` that is not one of those three values returns `400 Bad Request` with an
+`error` naming the allowed values. That includes an empty `?status=` and a different
+case such as `Done`. Giving `status` more than once (`?status=todo&status=done`) is
+also a `400`. The unfiltered list is never returned in place of an error. Other query
+parameters are ignored.
+
 ### Update a task's status: `PATCH /tasks/:id/status`
 
 Replace `:id` with the task's `id`. The body is a JSON object with `status`. The
@@ -217,7 +228,7 @@ Every error response is JSON with a single `error` field that explains the probl
 
 | Status | When |
 |---|---|
-| `400 Bad Request` | The body is not valid JSON, is not a JSON object, has a field the endpoint does not accept, or has an invalid or missing `title` or `status`. |
+| `400 Bad Request` | The body is not valid JSON, is not a JSON object, has a field the endpoint does not accept, or has an invalid or missing `title` or `status`. `GET /tasks` also returns it for an invalid or repeated `status` query parameter. |
 | `404 Not Found` | No task has that id, or no endpoint matches the path. |
 | `405 Method Not Allowed` | The path exists but not for that method. The `Allow` header lists the methods that work. |
 | `413 Payload Too Large` | The request body is larger than 64 KiB (65536 bytes). |

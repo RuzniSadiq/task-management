@@ -3,6 +3,10 @@
 // Routes:
 //   POST  /tasks              {"title": string, "status"?: string} → 201 task
 //   GET   /tasks              → 200 [task, ...] in creation order
+//   GET   /tasks?status=S     → 200, only the tasks whose status is S (todo,
+//                               in_progress or done); 400 if S is anything
+//                               else (empty, wrong case) or given twice.
+//                               Other query parameters are ignored.
 //   PATCH /tasks/:id/status   {"status": string} → 200 task
 //
 // Every error response is application/json with body {"error": string}.
@@ -138,12 +142,17 @@ function methodNotAllowed(allowed: readonly string[]): HttpError {
 
 async function route(store: TaskStore, request: IncomingMessage, response: ServerResponse): Promise<void> {
   const method = request.method ?? "";
-  const { pathname } = new URL(request.url ?? "/", "http://localhost");
+  const { pathname, searchParams } = new URL(request.url ?? "/", "http://localhost");
   const segments = pathname.split("/");
 
   if (pathname === "/tasks") {
     if (method === "GET") {
-      sendJson(response, 200, store.list());
+      // Which statuses are valid is the store's rule; only repetition is checked here.
+      const statuses = searchParams.getAll("status");
+      if (statuses.length > 1) {
+        throw new HttpError(400, "status may be given at most once");
+      }
+      sendJson(response, 200, store.list(statuses[0]));
       return;
     }
     if (method === "POST") {
