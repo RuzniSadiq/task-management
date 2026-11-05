@@ -34,6 +34,8 @@ export const FINDING_LABEL = "control-finding";
 export const DEFAULT_REPO = "RuzniSadiq/task-management";
 export const SUMS_ASSET = "SHA256SUMS";
 export const EVIDENCE_ASSET = "release-evidence.json";
+/** The only workflow whose attestation is accepted (path in the repo, per `gh attestation verify --signer-workflow`). */
+export const RELEASE_WORKFLOW = ".github/workflows/release.yml";
 
 export interface Asset { id: number; name: string }
 export interface ReleaseInfo { tag: string; url: string; draft: boolean; assets: Asset[] }
@@ -43,8 +45,11 @@ export interface Issue { number: number; title: string }
 export interface Gh {
   releases(): ReleaseInfo[];
   download(asset: Asset): Buffer;
-  /** Run `gh attestation verify` on these exact bytes, saved under `name`. */
-  attest(name: string, bytes: Buffer): { ok: boolean; detail: string };
+  /**
+   * Run `gh attestation verify` on these exact bytes, saved under `name`. The attestation must come
+   * from release.yml running on `refs/tags/<tag>`: any other workflow or ref (replay, minted) fails.
+   */
+  attest(name: string, bytes: Buffer, tag: string): { ok: boolean; detail: string };
   ensureLabel(): void;
   openFindings(): Issue[];
   createIssue(title: string, body: string): number;
@@ -103,14 +108,14 @@ export function parseSums(text: string): Map<string, string> {
 }
 
 /** The artefact name and digest recorded by release.yml, or the reason they cannot be read. */
-export function parseEvidence(text: string): { name: string; sha256: string } | string {
+export function parseEvidence(text: string): { name: string; sha256: string; tag: string | null } | string {
   let rec: unknown;
   try { rec = JSON.parse(text); } catch { return `${EVIDENCE_ASSET} is not valid JSON`; }
-  const artefact = (rec as { artefact?: { name?: unknown; sha256?: unknown } } | null)?.artefact;
+  const artefact = (rec as { artefact?: { name?: unknown; sha256?: unknown; tag?: unknown } } | null)?.artefact;
   if (typeof artefact?.name !== "string" || typeof artefact.sha256 !== "string" || !HEX64.test(artefact.sha256.toLowerCase())) {
     return `${EVIDENCE_ASSET} has no artefact.name/artefact.sha256`;
   }
-  return { name: artefact.name, sha256: artefact.sha256.toLowerCase() };
+  return { name: artefact.name, sha256: artefact.sha256.toLowerCase(), tag: typeof artefact.tag === "string" ? artefact.tag : null };
 }
 
 function fetchText(gh: Gh, assets: Asset[], name: string): { text: string } | { error: string } {
@@ -130,6 +135,11 @@ export function verifyRelease(gh: Gh, rel: ReleaseInfo): ReleaseResult {
   const evFile = fetchText(gh, rel.assets, EVIDENCE_ASSET);
   const evidence = "text" in evFile ? parseEvidence(evFile.text) : evFile.error;
   if (typeof evidence === "string") reasons.push(evidence);
+
+  // The record must name this release's tag, or a record copied from another release would pass.
+  if (typeof evidence !== "string" && evidence.tag !== rel.tag) {
+    reasons.push(`${EVIDENCE_ASSET} records tag ${evidence.tag ?? "none"}, but this release is ${rel.tag}`);
+  }
 
   // Every non-record asset is served to users, so every one is hashed and checked, whatever its name.
   const served = rel.assets.filter((a) => !isRecord(a.name));
@@ -159,7 +169,7 @@ export function verifyRelease(gh: Gh, rel: ReleaseInfo): ReleaseResult {
     let attestation: ArtefactResult["attestation"] = "not-run";
     if (bytes !== undefined) {
       let outcome: { ok: boolean; detail: string };
-      try { outcome = gh.attest(asset.name, bytes); } catch (e) { outcome = { ok: false, detail: errText(e) }; }
+      try { outcome = gh.attest(asset.name, bytes, rel.tag); } catch (e) { outcome = { ok: false, detail: errText(e) }; }
       attestation = outcome.ok ? "pass" : "fail";
       if (!outcome.ok) why.push(`attestation verify failed for ${asset.name}: ${outcome.detail || "no detail"}`);
     }
@@ -284,12 +294,13 @@ export function ghCli(repo: string): Gh {
       ".[] | {tag: .tag_name, url: .html_url, draft: .draft, assets: [.assets[] | {id, name}]}"])
       .toString("utf8").split("\n").filter((l) => l.trim() !== "").map((l) => JSON.parse(l) as ReleaseInfo),
     download: (asset) => gh(["api", "-H", "Accept: application/octet-stream", `repos/${repo}/releases/assets/${asset.id}`]),
-    attest: (name, bytes) => {
+    attest: (name, bytes, tag) => {
       const dir = mkdtempSync(join(tmpdir(), "verify-release-"));
       try {
         const file = join(dir, name.replace(/[/\\]/g, "_"));
         writeFileSync(file, bytes);
-        const r = spawnSync("gh", ["attestation", "verify", file, "--repo", repo], { encoding: "utf8" });
+        const r = spawnSync("gh", ["attestation", "verify", file, "--repo", repo,
+          "--signer-workflow", `${repo}/${RELEASE_WORKFLOW}`, "--source-ref", `refs/tags/${tag}`, "--deny-self-hosted-runners"], { encoding: "utf8" });
         const detail = `${r.stdout}\n${r.stderr}`.trim().split("\n").filter((l) => l.trim() !== "").slice(-3).join(" / ");
         return { ok: r.error === undefined && r.status === 0, detail: r.error?.message ?? detail };
       } finally { rmSync(dir, { recursive: true, force: true }); }
