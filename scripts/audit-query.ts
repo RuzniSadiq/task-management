@@ -60,6 +60,18 @@ export interface AuditRecord {
   reasons: string[];
   evidence: string[];
   source: string;
+  /** From the record's optional `actors` object (control-audit since #69); null on older records. */
+  actors: RecordedActors | null;
+}
+
+export interface RecordedActors {
+  author: string | null;
+  author_vendor: string | null;
+  reviewer: string | null;
+  reviewer_vendor: string | null;
+  merge_sha: string | null;
+  merged_at: string | null;
+  checks: Record<string, string>;
 }
 
 export interface ReleaseEvidence {
@@ -92,9 +104,9 @@ export interface Answer {
   query: string;
   found: boolean;
   resolved: { commit: string | null; tag: string | null };
-  change: { pr: number | null; head_sha: string; merge_sha: null; author_vendor: null; merged_via_pr: string | null; vendor_declared: string | null } | null;
-  approval: { reviewer: null; independent_approval_at_head: string | null; vendor_separation: string | null; independent: boolean | null; reasons: string[] } | null;
-  checks: { head_sha: string; result: string | null; passed: string[]; failure_reasons: string[]; controls: { id: string; check: string; result: string }[] } | null;
+  change: { pr: number | null; head_sha: string; merge_sha: string | null; merged_at: string | null; author: string | null; author_vendor: string | null; merged_via_pr: string | null; vendor_declared: string | null } | null;
+  approval: { reviewer: string | null; reviewer_vendor: string | null; independent_approval_at_head: string | null; vendor_separation: string | null; independent: boolean | null; reasons: string[] } | null;
+  checks: { head_sha: string; result: string | null; passed: string[]; conclusions: Record<string, string> | null; failure_reasons: string[]; controls: { id: string; check: string; result: string }[] } | null;
   release: {
     tag: string | null; commit: string | null; artefact: string | null; sha256: string | null;
     approved_by: string[]; triggered_by: string | null; recorded_at: string | null; checks: Record<string, string>;
@@ -136,6 +148,13 @@ function listFiles(dir: string, root: string, warnings: string[], seen: Set<stri
   return out;
 }
 
+const strOrNull = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+function actorsOf(v: unknown): RecordedActors | null {
+  if (!isObj(v)) return null;
+  return { author: strOrNull(v.author), author_vendor: strOrNull(v.author_vendor), reviewer: strOrNull(v.reviewer), reviewer_vendor: strOrNull(v.reviewer_vendor),
+    merge_sha: strOrNull(v.merge_sha), merged_at: strOrNull(v.merged_at), checks: checksOf(v.checks) };
+}
+
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
 /** A record is "recognised" when it is a well-formed control record; one with no sha (branch protection) is kept out of the sha index. */
@@ -158,6 +177,7 @@ function toAudit(o: Json, source: string): AuditRecord | "no-sha" | null {
     result,
     reasons: strs(o.reasons),
     evidence: strs(o.evidence),
+    actors: actorsOf(o.actors),
     source,
   };
 }
@@ -226,14 +246,21 @@ export function answer(corpus: Corpus, query: string): Answer | { ambiguous: str
   let commit: string | null = byTag[0]?.commit ?? null;
   if (shaLike) {
     const full = new Set<string>();
-    for (const a of corpus.audit) if (matches(a.sha, q)) full.add(a.sha);
-    for (const r of corpus.releases) if (r.commit !== null && matches(r.commit, q)) full.add(r.commit);
+    const mergeShas = new Set<string>();
+    for (const a of corpus.audit) {
+      if (matches(a.sha, q)) full.add(a.sha);
+      // A merge commit recorded by control-audit resolves to its PR head, so one change is not two answers.
+      else if (a.actors?.merge_sha != null && matches(a.actors.merge_sha, q)) { full.add(a.sha); mergeShas.add(a.actors.merge_sha); }
+    }
+    for (const r of corpus.releases) if (r.commit !== null && matches(r.commit, q) && !mergeShas.has(r.commit)) full.add(r.commit);
     if (full.size > 1) return { ambiguous: [...full].sort() };
     commit = [...full][0] ?? q;
   }
 
-  const records = commit === null ? [] : corpus.audit.filter((a) => a.sha === commit);
+  // Records at the queried commit, plus records of the PR that was merged as that commit (control-audit `actors.merge_sha`).
+  const records = commit === null ? [] : corpus.audit.filter((a) => a.sha === commit || a.actors?.merge_sha === commit);
   const linked = new Set<string>(commit === null ? [] : [commit]);
+  for (const r of records) if (r.actors?.merge_sha != null) linked.add(r.actors.merge_sha);
   const releases = byTag.length > 0 ? byTag : corpus.releases.filter((r) => r.commit !== null && linked.has(r.commit));
   const rel = releases[0] ?? null;
   const warnings = [...corpus.warnings];
@@ -253,6 +280,8 @@ export function answer(corpus: Corpus, query: string): Answer | { ambiguous: str
   const separation = verdictOf("vendor-separation");
   const approval = verdictOf("independent-approval-at-head");
   const green = verdictOf("required-checks-green");
+  // Identity facts are recorded on every PR record at a head; take them from the first record that carries them.
+  const actors = prRecords.find((r) => r.actors !== null)?.actors ?? null;
 
   const verifs = corpus.verifications.filter((v) => tag !== null && v.tag === tag)
     .sort((a, b) => (a.recorded_at ?? "").localeCompare(b.recorded_at ?? ""));
@@ -264,12 +293,13 @@ export function answer(corpus: Corpus, query: string): Answer | { ambiguous: str
     found,
     resolved: { commit: records.length > 0 ? commit : rel?.commit ?? null, tag },
     change: first === null ? null : {
-      pr: first.pr, head_sha: first.sha, merge_sha: null, author_vendor: null,
+      pr: first.pr, head_sha: first.sha, merge_sha: actors?.merge_sha ?? null, merged_at: actors?.merged_at ?? null,
+      author: actors?.author ?? null, author_vendor: actors?.author_vendor ?? null,
       merged_via_pr: verdictOf("merged-via-pr")?.result ?? null,
       vendor_declared: verdictOf("agent-vendor-trailer")?.result ?? null,
     },
     approval: first === null ? null : {
-      reviewer: null,
+      reviewer: actors?.reviewer ?? null, reviewer_vendor: actors?.reviewer_vendor ?? null,
       independent_approval_at_head: approval?.result ?? null,
       vendor_separation: separation?.result ?? null,
       // Independent only when BOTH a valid approval at the head and vendor separation are recorded passes.
@@ -278,9 +308,10 @@ export function answer(corpus: Corpus, query: string): Answer | { ambiguous: str
       reasons: [...(approval?.result === "pass" ? [] : approval?.reasons ?? []), ...(separation?.result === "pass" ? [] : separation?.reasons ?? [])],
     },
     checks: records.length === 0 ? null : {
-      head_sha: commit ?? "",
+      head_sha: first?.sha ?? commit ?? "",
       result: green?.result ?? null,
       passed: green?.result === "pass" ? green.evidence.flatMap((e) => (e.startsWith("check ") ? [e.slice(6)] : [])).sort() : [],
+      conclusions: actors !== null && Object.keys(actors.checks).length > 0 ? actors.checks : null,
       failure_reasons: green !== null && green.result !== "pass" ? green.reasons : [],
       controls: records.map((r) => ({ id: r.control_id, check: r.check, result: r.result })),
     },
@@ -309,12 +340,12 @@ export function render(a: Answer): string {
   L.push("");
   L.push("1. Who / which agent made the change?");
   L.push(a.change === null ? `   ${NO} (no control-audit record for a pull request at this commit)`
-    : `   PR ${a.change.pr === null ? "?" : `#${a.change.pr}`}  head ${a.change.head_sha}  merged via PR: ${a.change.merged_via_pr ?? NO}\n   author / agent: not recorded in control-audit evidence (agent-vendor-trailer: ${a.change.vendor_declared ?? NO}); merge sha: not recorded`);
+    : `   PR ${a.change.pr === null ? "?" : `#${a.change.pr}`}  head ${a.change.head_sha}  merged via PR: ${a.change.merged_via_pr ?? NO}\n   author: ${a.change.author ?? "not recorded"}; agent vendor: ${a.change.author_vendor ?? "not recorded"} (agent-vendor-trailer: ${a.change.vendor_declared ?? NO})\n   merge sha: ${a.change.merge_sha ?? "not recorded"}; merged at: ${a.change.merged_at ?? "not recorded"}`);
   L.push("2. Who approved, and was it an independent vendor?");
   if (a.approval === null) L.push(`   ${NO}`);
   else {
     const ind = a.approval.independent === null ? NO : a.approval.independent ? "yes" : "NO";
-    L.push(`   approver login: not recorded; independent approval at head: ${a.approval.independent_approval_at_head ?? NO}; independent vendor (vendor-separation): ${ind}`);
+    L.push(`   approver login: ${a.approval.reviewer ?? "not recorded"}; reviewer vendor: ${a.approval.reviewer_vendor ?? "not recorded"}; independent approval at head: ${a.approval.independent_approval_at_head ?? NO}; independent vendor (vendor-separation): ${ind}`);
     for (const r of a.approval.reasons) L.push(`   - ${r}`);
   }
   L.push("3. Which checks passed at that head?");
