@@ -63,11 +63,13 @@ test("sha query answers all five questions from evidence alone", () => {
   try {
     const a = ans(dir, HEAD);
     assert.equal(a.found, true);
-    assert.deepEqual(a.change, { pr: 49, head_sha: HEAD, merge_sha: null, author_vendor: null, merged_via_pr: "pass", vendor_declared: "pass" });
+    assert.deepEqual(a.change, { pr: 49, head_sha: HEAD, merge_sha: null, merged_at: "2026-11-03T00:00:00Z", author: "RuzniSadiq", author_vendor: "claude", merged_via_pr: "pass", vendor_declared: "pass" });
     assert.equal(a.approval?.independent_approval_at_head, "pass");
     assert.equal(a.approval?.vendor_separation, "pass");
     assert.equal(a.approval?.independent, true);
-    assert.equal(a.approval?.reviewer, null);
+    assert.equal(a.approval?.reviewer, "ruzni-reviewer");
+    assert.equal(a.approval?.reviewer_vendor, "codex");
+    assert.deepEqual(a.checks?.conclusions, { gate: "success", "security-fast": "success", "test-integrity": "success", DCO: "success" });
     assert.equal(a.checks?.result, "pass");
     assert.deepEqual(a.checks?.passed, ["DCO", "gate", "security-fast", "test-integrity"]);
     assert.deepEqual(a.checks?.failure_reasons, []);
@@ -110,7 +112,7 @@ test("--json prints the answers and exits 0; text output names every question", 
     assert.equal(t.code, 0);
     for (const s of ["1. Who", "2. Who approved", "3. Which checks", "4. What was released", "5. Re-verified"]) assert.match(t.out, new RegExp(s));
     assert.match(t.out, /independent vendor \(vendor-separation\): yes/);
-    assert.match(t.out, /author \/ agent: not recorded/);
+    assert.match(t.out, /author: RuzniSadiq; agent vendor: claude/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -247,5 +249,53 @@ test("CLI entry point runs under node and exits non-zero with no evidence", () =
     const none = spawnSync(process.execPath, [script, OTHER, "--evidence", dir], { encoding: "utf8" });
     assert.equal(none.status, 1);
     assert.match(none.stdout, /NO EVIDENCE/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---- #69: actors recorded by control-audit ------------------------------------------------------
+
+const withMerge = {
+  "control-audit.jsonl": audit({ mergeSha: MERGE }),
+  "v0.1.0/release-evidence.json": releaseEvidence,
+  "verify-release-evidence.json": verifyEvidence("pass", "2026-11-05T12:00:00.000Z"),
+};
+
+test("#69 a recorded merge commit links the PR, its author and reviewer to the release in both directions", () => {
+  const dir = fixture(withMerge);
+  try {
+    const byHead = ans(dir, HEAD);
+    assert.equal(byHead.change?.merge_sha, MERGE);
+    assert.equal(byHead.release?.tag, "v0.1.0");
+    for (const q of [MERGE, MERGE.slice(0, 8), "v0.1.0"]) {
+      const a = ans(dir, q);
+      assert.equal(a.change?.pr, 49, q);
+      assert.equal(a.change?.head_sha, HEAD, q);
+      assert.equal(a.change?.author_vendor, "claude", q);
+      assert.equal(a.approval?.reviewer, "ruzni-reviewer", q);
+      assert.equal(a.release?.sha256, DIGEST, q);
+      assert.equal(a.checks?.head_sha, HEAD, q);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("#69 records written before actors existed are still read; the identity fields are null, never guessed", () => {
+  const stripped = audit({ mergeSha: MERGE }).trimEnd().split("\n").map((l) => { const o = JSON.parse(l) as Record<string, unknown>; delete o.actors; return JSON.stringify(o); }).join("\n");
+  const dir = fixture({ "control-audit.jsonl": stripped });
+  try {
+    const a = ans(dir, HEAD);
+    assert.deepEqual(a.warnings, []);
+    assert.equal(a.checks?.result, "pass");
+    assert.deepEqual(a.checks?.passed, ["DCO", "gate", "security-fast", "test-integrity"]);
+    assert.deepEqual([a.change?.merge_sha, a.change?.author, a.change?.author_vendor, a.approval?.reviewer, a.approval?.reviewer_vendor, a.checks?.conclusions], [null, null, null, null, null, null]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("#69 a failed check shows its conclusion beside the producer's reason", () => {
+  const dir = fixture({ "a.jsonl": audit({ failingCheck: "DCO" }) });
+  try {
+    const a = ans(dir, HEAD);
+    assert.equal(a.checks?.conclusions?.DCO, "failure");
+    assert.equal(a.checks?.conclusions?.gate, "success");
+    assert.deepEqual(a.checks?.passed, []);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

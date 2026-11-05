@@ -868,3 +868,46 @@ test("#61 a read failure on reviews is not waivable for any check that depends o
   assert.equal(a.result, "fail");
   assert.ok(a.records.every((r) => r.waiver === undefined));
 });
+
+// ---- #69: actors ---------------------------------------------------------------------------------
+
+test("#69 every PR record carries who and when: author, vendors, reviewer, merge sha and each required check's conclusion", () => {
+  const p = goodPr(80);
+  p.info.author = "RuzniSadiq";
+  p.info.mergeSha = "e".repeat(40);
+  const a = audit(fakeGh({ prs: [p] }).gh, opts);
+  const recs = a.records.filter((r) => r.subject.pr === 80);
+  assert.equal(recs.length, 6);
+  const want = { author: "RuzniSadiq", author_vendor: "claude", reviewer: "ruzni-reviewer", reviewer_vendor: "codex", merge_sha: "e".repeat(40), merged_at: p.info.mergedAt,
+    checks: { gate: "success", "security-fast": "success", "test-integrity": "success", DCO: "success" } };
+  for (const r of recs) assert.deepEqual(r.actors, want);
+  assert.ok(a.records.filter((r) => r.subject.kind !== "pr").every((r) => r.actors === undefined));
+  assert.match(toJsonl(a.records), /"actors":\{"author":"RuzniSadiq"/);
+});
+
+test("#69 unknown facts are null and results are unchanged: a failed read, an undeclared vendor, a red check", () => {
+  const p = goodPr(81, { reviews: [{ user: { login: "ruzni-reviewer" }, state: "APPROVED", commit_id: goodPr(81).info.head, body: "LGTM" }], runs: cfg.requiredContexts.map((c) => (c === "gate" ? { ...green(c), conclusion: "failure" } : green(c))) });
+  const a = audit(fakeGh({ prs: [p] }).gh, opts);
+  const r = a.records.find((x) => x.subject.pr === 81);
+  assert.deepEqual([r?.actors?.reviewer, r?.actors?.reviewer_vendor, r?.actors?.author, r?.actors?.merge_sha], ["ruzni-reviewer", null, null, null]);
+  assert.equal(r?.actors?.checks.gate, "failure");
+  assert.ok(checksFailed(a, 81).includes("vendor-separation") && checksFailed(a, 81).includes("required-checks-green"));
+  const failing = audit(fakeGh({ prs: [goodPr(82)], failOn: new Set(["checkRuns"]) }).gh, opts);
+  assert.deepEqual(failing.records.find((x) => x.subject.pr === 82)?.actors?.checks, {});
+  assert.equal(failing.result, "fail");
+});
+
+test("#69 tied newest runs of one check that disagree are recorded as ambiguous, never as either outcome", () => {
+  const runs = [...cfg.requiredContexts.map((c) => green(c)), { ...green("gate"), id: 99, conclusion: "failure" }];
+  const a = audit(fakeGh({ prs: [goodPr(83, { runs })] }).gh, opts);
+  const rec = a.records.find((r) => r.subject.pr === 83 && r.control.check === "required-checks-green");
+  assert.equal(rec?.result, "fail");
+  assert.equal(rec.actors?.checks.gate, "ambiguous");
+  assert.equal(rec.actors?.checks.DCO, "success");
+  // tied runs that agree are not ambiguous
+  const agree = audit(fakeGh({ prs: [goodPr(84, { runs: [...cfg.requiredContexts.map((c) => green(c)), { ...green("gate"), id: 98 }] })] }).gh, opts);
+  assert.equal(agree.records.find((r) => r.subject.pr === 84)?.actors?.checks.gate, "success");
+  // a newer run wins over an older one
+  const newer = audit(fakeGh({ prs: [goodPr(85, { runs: [...cfg.requiredContexts.map((c) => green(c)), { ...green("gate", "2026-11-02T09:00:00Z"), id: 97, conclusion: "failure" }] })] }).gh, opts);
+  assert.equal(newer.records.find((r) => r.subject.pr === 85)?.actors?.checks.gate, "success");
+});
