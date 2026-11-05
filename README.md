@@ -1,15 +1,125 @@
 # task-management
 
 A small Task Management API, built by AI agents through
-[The Gibson](https://github.com/The-AIE/the-gibson).
-[FINOS](https://www.finos.org/) controls are planned (not yet in place).
+[The Gibson](https://github.com/The-AIE/the-gibson), delivered under FINOS-referenced controls that the
+agents cannot switch off, with independent checks that detect violations and keep machine-readable evidence.
 
-## Project status
+The question this repository answers: can AI agents autonomously build and deliver useful software while
+an independently enforced control system prevents unacceptable actions, detects violations and records
+reliable evidence of what happened?
 
-The Task Management API is implemented: you can create tasks, list them, and update a
-task's status, and tasks are saved to a local JSON file. See [Using the API](#using-the-api)
-for how to start the server and call it. Remaining work is tracked in this repository's
-issues.
+- **The software:** create, list and update the status of tasks over HTTP, persisted to a local JSON file
+  (see [Using the API](#using-the-api)). Agents built it from a plain-English requirement; the approved plan
+  is epic [#26](https://github.com/RuzniSadiq/task-management/issues/26).
+- **The controls:** 6 preventative and 3 detective, each mapped to a FINOS reference, its risk, its
+  mechanism and a command that verifies it independently: **[CONTROLS.md](CONTROLS.md)**
+  (generated from `controls.json`; a test fails if it drifts or if code cites an unregistered id).
+- **The evidence:** [evidence/](evidence/README.md), reproduced by one command (see
+  [Reproduce the scenarios](#reproduce-the-scenarios)).
+
+## Architecture
+
+    requirement ──► Gibson loop (plan → build → test → review → security → release → historian)
+                         │ builder agent: Claude (Sonnet 5.5 by default), own worktree and branch per task
+                         ▼
+                 pull request ◄── review lane (separate terminal, reviewer token): a different
+                         │         vendor (Codex) reviews the exact head and publishes a verdict
+                         ▼
+        PREVENTATIVE (GitHub enforces; the agent has no say)
+          branch protection on main: gate, security-fast, test-integrity, DCO (strict), 1 independent approval
+          after the last push, admins included, no force push; `release` environment needs a human approval
+          release.yml: gate re-run, ancestry and version checks, signed attestation, sha256 records
+                         │
+                         ▼  merged / released
+        DETECTIVE (scheduled GitHub Actions, no access to the builder)
+          verify-release  re-downloads every release, re-checks digests and the attestation
+          control-audit   re-checks every merged PR, branch protection and direct pushes
+                         │  JSONL / JSON evidence (task-management.control-evidence/v1), control-finding issues
+                         ▼
+          audit-query     answers who / what / which control / result / evidence from retained files only
+
+### How the Gibson is used
+
+- The Gibson loop (the Gibson's own `scripts/loop.sh`, run from a pinned local checkout of The Gibson, not from this
+  repository) drives each issue through its hats. Each task is claimed (the Gibson's `claim.sh`) as one branch and one worktree, and the claim line lives in the PR body.
+- **Development and evaluation are separated.** The author is Claude; the reviewer is a different vendor
+  (Codex), chosen by the review lane, which refuses a PR unless every commit carries exactly one
+  `Agent-Vendor` trailer. The reviewer token is read only by the review lane, never by the builder. A
+  builder never approves, and Tier C changes (anything under `scripts/*` or `.github/workflows/*`) are merged
+  by a human.
+- The agent runs with a fine-grained token scoped to this repository (no administration, secrets, workflow
+  or environment rights), and the Gibson's repo-boundary guard refuses commits that leave the repository
+  or touch gate configuration.
+
+### Design decisions
+
+- **Enforcement lives in GitHub and in CI, not in prompts.** Nothing an agent is told can lift a required
+  check or an approval requirement. The proofs are `evidence/P2-agent-least-privilege.json` and the canary PRs.
+- **Detectors run separately from the builder** (scheduled workflows with their own token) and re-derive
+  their verdicts from GitHub's records instead of trusting what the pipeline said about itself.
+- **Failures stay failures.** A waived violation (`control-waivers.json`) is still `fail` in the evidence
+  with the waiver attached; waivers are exact (PR, head SHA, check) and never cover an evidence read failure.
+  Unreadable evidence fails closed.
+- **No new dependencies.** Node's built-in test runner, `node:http` and a JSON file; TypeScript runs
+  directly on Node 22.18+.
+- **Evidence is linked to what it describes:** commit and PR head SHAs, artefact sha256, run URLs.
+
+## Reproduce the scenarios
+
+    npm ci
+    npm run typecheck && npm run lint && npm test && npm run build    # the green gate
+    evidence/run-scenarios.sh                                         # scenarios A to D
+
+| Scenario | What it shows | Where |
+|---|---|---|
+| A: successful delivery | The app is created, listed, updated, survives a restart; the full test suite passes; the PRs, agent vendor and independent reviews that built it | `evidence/scenarios/a/` |
+| B: preventative block | Canary PRs #6 to #10 (clean, deleted test, skipped test, failing assertion, unsigned commit) each fail exactly their expected required checks and cannot merge; the rule is the named required check | `evidence/scenarios/b/`, `evidence/P2-agent-least-privilege.json` |
+| C: detective finding | `verify-release` fails a v0.1.0 tarball altered after release (digest mismatch and attestation), and passes the untouched release | `evidence/scenarios/c/` |
+| D: audit evidence | `audit-query` answers for a commit and for v0.1.0 from retained evidence files only | `evidence/scenarios/d/` |
+
+The detectors also run in CI: `control-audit` and `verify-release` (daily, and on release events). Their
+findings are `control-finding` issues.
+
+## Limitations
+
+- **Agents share the owner's OS user.** An agent process could in principle read the owner's `gh` login,
+  the Keychain or the SSH key. GitHub-side rules still apply to every action, but the machine is not an
+  isolation boundary and the separate builder and reviewer terminals are a convention.
+- **Evidence is not tamper-evident.** It is committed through reviewed PRs and uploaded as workflow
+  artefacts; nothing signs it or stores it write-once.
+- **Detection latency.** Replacing a release asset does not reliably emit an event, so `verify-release`
+  can take up to about 24 hours to notice.
+- **Scenario C is a simulated violation.** The tarball is altered in transit by a shim so the real
+  detector and real attestation run without changing the real release.
+- **The audit window starts at 2026-11-04T15:00Z**, the first PR merged under the Gibson rules. Earlier
+  PRs have reviewed waivers in `control-waivers.json`; the repository's root commit has no PR.
+- **Identities are recorded per PR, not per action.** `control-audit` records the author, agent vendor,
+  reviewer, merge commit and check conclusions for each merged PR (the `actors` object). It does not record
+  the model version or the agent run id, and evidence written before that field existed reports those
+  facts as unavailable rather than guessing.
+- **FINOS labels.** The FINOS catalogues are pre-alpha. Several labels in the code do not match the catalogue
+  entry of the same id; they are listed in `CONTROLS.md` and tracked in
+  [#64](https://github.com/RuzniSadiq/task-management/issues/64).
+- **The Gibson is patched locally** (one fix to the repo-boundary guard's push handling); the runner needs a
+  supervisor to run `claim.sh` and `release-claim.sh`.
+- 11 moderate `npm audit` advisories in the lint toolchain are tracked in
+  [#16](https://github.com/RuzniSadiq/task-management/issues/16).
+- Only synthetic data, a local deployment and a single process owning the JSON file.
+
+## Before deploying in a regulated production environment
+
+- Run each agent as its own OS user or container holding only its restricted token; issue GitHub App
+  identities instead of machine users, so required-review evidence is recognised by the platform.
+- Sign evidence and ship it to a write-once store, with retention and access control, and verify the
+  signatures in `audit-query`.
+- Make detection event-driven (webhooks, `repository_dispatch`) and alert a person, not only an issue.
+- Protect `controls.json`, `control-waivers.json`, `.gibson-delivery.json` and the workflows with
+  CODEOWNERS and organisation rulesets; require two approvers for waivers.
+- Pin verification to workflow identity, tag and commit; add SBOM, dependency and SAST scanning as
+  required checks; resolve the npm advisories.
+- Add per-agent identity to every action (agent id, model, run id) in the evidence, and correct the FINOS
+  labels so audit records cite the right catalogue entries.
+- Replace the JSON file with a real database, and add authentication.
 
 ## Requirements
 
@@ -216,11 +326,11 @@ one PR, its full 40-character head SHA, one check and a written rationale. There
 - A missing file means no waivers. An unreadable or malformed file stops the run with exit code 2.
 - A waiver is approved by the pull request that adds it: branch protection requires the independent
   review and the commit history records who merged it.
-- The scheduled workflow audits from `--since 2026-11-04T15:00:00Z` (see `control-audit.yml`). Running
+- The scheduled workflow audits from `--since 2026-11-04T15:00:00Z` (see `.github/workflows/control-audit.yml`). Running
   with an earlier `--since` also reports the repository's root commit (`9bcce1f`, "chore: initialize
   project"), which has no pull request because it created the history; that is not waived.
 
-## Known limitations
+## Known limitations of the agent setup
 
 - **Agents run as the same OS user as the owner.** An agent process can in principle
   read anything that user can (the owner's `gh` login, the reviewer token in the
