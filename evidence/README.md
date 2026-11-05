@@ -58,7 +58,12 @@ installed exactly as `scripts/loop.sh` installs it:
 
 ## Reproduce scenarios A to D
 
-Needs node >= 22.18, `gh` (authenticated, read access), `jq` and `curl`. It writes only under
+Needs node >= 22.18, `gh` (authenticated), `jq` and `curl`. A read-only token (public-repo read, no
+administration rights) is enough: B reads the required checks from `GET /repos/{repo}/branches/main`, which
+needs no admin rights. D tolerates exactly one failure with such a token, `control-audit`'s
+branch-protection record (`GET .../protection` needs administration, so the record fails closed with
+"could not read"); any other unwaived failing record fails D. With an admin token nothing is tolerated.
+The self-test of both rules is `evidence/run-scenarios.sh selftest`. It writes only under
 `evidence/scenarios/` and never writes to GitHub (no issues, releases, labels or pushes).
 
     evidence/run-scenarios.sh          # all four; exit 1 if any scenario fails
