@@ -220,6 +220,18 @@ test("a non-'pass' result (pending, number, uppercase) is never reported as a pa
   }
 });
 
+test("a record with the right shape but a wrong or missing schema/event cannot affect the answer", () => {
+  const forged = (o: Record<string, unknown>): string => JSON.stringify({ ...JSON.parse(line({})) as object, ...o });
+  const lines = [forged({ schema: undefined }), forged({ schema: "other/v1" }), forged({ event: undefined }), forged({ event: "release.published" })];
+  const dir = fixture({ "a.jsonl": lines.join("\n") + "\n" });
+  try {
+    const a = ans(dir, HEAD);
+    assert.equal(a.found, false);
+    assert.equal(a.warnings.length, 4);
+    assert.equal(query(dir, HEAD).code, 1);
+  } finally { cleanup(dir); }
+});
+
 // ---- file-system shapes -----------------------------------------------------------------------
 
 test("deeply nested evidence is found", () => {

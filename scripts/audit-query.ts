@@ -140,6 +140,7 @@ const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is st
 
 /** A record is "recognised" when it is a well-formed control record; one with no sha (branch protection) is kept out of the sha index. */
 function toAudit(o: Json, source: string): AuditRecord | "no-sha" | null {
+  if (o.schema !== SCHEMA || o.event !== "control.evaluated") return null;
   const subject = o.subject;
   const c = o.control;
   if (!isObj(subject) || !isObj(c)) return null;
