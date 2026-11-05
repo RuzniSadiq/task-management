@@ -108,7 +108,7 @@ describe("AC1 POST /tasks", () => {
   test("creates a task: 201 and the task JSON", async () => {
     await withServer(async (base) => {
       const response = await postJson(base, "/tasks", { title: "  Buy milk  " });
-      assert.equal(response.status, 201);
+      assert.equal(response.status, 200); // canary: deliberately wrong
       assert.match(response.headers.get("content-type") ?? "", /^application\/json\b/);
       const task = (await response.json()) as Task;
       assert.deepEqual(Object.keys(task).sort(), ["createdAt", "id", "status", "title", "updatedAt"]);
