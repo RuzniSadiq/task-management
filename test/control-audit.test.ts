@@ -68,7 +68,8 @@ function fakeGh(w: World) {
     reviews: (n) => { bad("reviews"); return byPr(n).reviews.map((r) => ("submitted_at" in r ? r : { ...r, submitted_at: "2026-11-02T12:00:00Z" })); },
     checkRuns: (sha) => { bad("checkRuns"); const f = prs.find((p) => p.info.head === sha); if (f === undefined) throw new Error("no head"); return f.runs; },
     protection: () => { bad("protection"); const p = w.protection ?? GOOD_PROTECTION; if (p instanceof Error) throw p; return p; },
-    branchCommits: () => { bad("branchCommits"); return mainCommits; },
+    branchPushes: () => { bad("branchPushes"); return mainCommits.length === 0 ? [] : [{ before: "b".repeat(40), after: "a".repeat(40), timestamp: "2026-11-03T01:00:00Z" }]; },
+    compare: () => { bad("compare"); return mainCommits; },
     mergedPrsOf: (sha) => { bad("mergedPrsOf"); return prs.filter((p) => p.info.head === sha).map((p) => p.info.number); },
     ensureLabel: () => { labelEnsured++; },
     openFindings: () => { bad("openFindings"); return open; },
@@ -449,9 +450,9 @@ test("direct push: an unreadable PR lookup fails closed; a failed commit listing
   const a = audit(fakeGh({ prs: [], direct: [direct], failOn: new Set(["mergedPrsOf"]) }).gh, opts);
   assert.equal(a.result, "fail");
   assert.match(failed(a)[0]?.reasons.join() ?? "", /could not read pull requests of d+: HTTP 502/);
-  const b = audit(fakeGh({ prs: [goodPr(47)], failOn: new Set(["branchCommits"]) }).gh, opts);
+  const b = audit(fakeGh({ prs: [goodPr(47)], failOn: new Set(["branchPushes"]) }).gh, opts);
   assert.equal(b.result, "fail");
-  assert.match(b.errors.join(), /could not list commits on main.*502/);
+  assert.match(b.errors.join(), /could not list pushes to main.*502/);
   assert.ok(b.records.some((r) => r.control.check === "branch-protection"));
 });
 
@@ -582,7 +583,8 @@ function runCli(w: CliWorld, extra: string[] = [], configText?: string) {
     const routes: Record<string, unknown> = {
       "repos/o/r/pulls": prs.map((p) => p.info),
       "repos/o/r/branches/main/protection": w.protection ?? GOOD_PROTECTION,
-      "repos/o/r/commits": [...prs.map((p) => ({ sha: p.info.head, message: "squash" })), ...(w.direct ?? [])],
+      "repos/o/r/activity": [{ before: "b".repeat(40), after: "a".repeat(40), timestamp: "2026-11-03T01:00:00Z" }],
+      [`repos/o/r/compare/${"b".repeat(40)}...${"a".repeat(40)}`]: [...prs.map((p) => ({ sha: p.info.head, message: "squash" })), ...(w.direct ?? [])],
     };
     for (const p of prs) {
       routes[`repos/o/r/pulls/${p.info.number}/commits`] = p.commits;
@@ -627,7 +629,7 @@ test("CLI clean pass: exit 0, JSONL written, every list call is paginated, no is
   assert.ok(r.records.every((x) => x.schema === SCHEMA && x.run.url === RUN_URL && x.run.attempt === "2" && x.result === "pass"));
   const apis = r.calls.filter((c) => c.args[0] === "api");
   const lists = apis.filter((c) => !c.args.some((x) => x.endsWith("/protection")));
-  assert.equal(lists.length, 1 + 2 * 3 + 1 + 2, "merged PRs, 3 per PR (commits, reviews, check-runs), main commits, PR lookup per commit");
+  assert.equal(lists.length, 1 + 2 * 3 + 2 + 2, "merged PRs, 3 per PR (commits, reviews, check-runs), pushes + compare, PR lookup per commit");
   for (const c of lists) {
     assert.equal(c.args[1], "--paginate", c.args.join(" "));
     assert.ok(c.args.some((x) => x.includes("per_page=100")), c.args.join(" "));
@@ -636,11 +638,25 @@ test("CLI clean pass: exit 0, JSONL written, every list call is paginated, no is
   assert.match(r.stdout, /control-audit: pass \(15 record/);
 });
 
+test("a backdated commit pushed directly to main is still reported: the window is the push record, not the commit date", () => {
+  // The commit's own date is irrelevant: it is returned by compare() for a push GitHub recorded in the window.
+  const sneaky: Commit = { sha: "e".repeat(40), message: "backdated 2001-01-01\n\nSigned-off-by: A <a@b.co>" };
+  const a = audit(fakeGh({ prs: [], direct: [sneaky] }).gh, opts);
+  assert.deepEqual(failed(a).map((r) => r.control.check), ["no-direct-push"]);
+  // A push recorded before the window is not re-audited, whatever its commits claim.
+  const g = fakeGh({ prs: [], direct: [sneaky] }).gh;
+  const old: Gh = { ...g, branchPushes: () => [{ before: "b".repeat(40), after: "a".repeat(40), timestamp: "2026-10-01T00:00:00Z" }] };
+  assert.equal(audit(old, opts).result, "pass");
+  const bad: Gh = { ...g, branchPushes: () => [{ before: "b".repeat(40), after: "a".repeat(40), timestamp: "not a date" }] };
+  assert.equal(audit(bad, opts).result, "fail");
+});
+
 test("CLI queries: merged PRs from the base branch, commits since the base date, protection by branch name", () => {
   const r = runCli({ prs: [goodPr(1)] });
   const paths = r.calls.map((c) => c.args.find((x) => x.startsWith("repos/")) ?? "");
   assert.ok(paths.includes("repos/o/r/pulls?state=closed&base=main&per_page=100"));
-  assert.ok(paths.includes("repos/o/r/commits?sha=main&since=2026-11-01T00%3A00%3A00Z&per_page=100"));
+  assert.ok(paths.includes("repos/o/r/activity?ref=refs%2Fheads%2Fmain&per_page=100"), "pushes come from the activity record");
+  assert.ok(!paths.some((x) => /since=/.test(x)), "no commit-date (since) filter: backdated commits would escape it");
   assert.ok(paths.includes("repos/o/r/branches/main/protection"));
   const merged = r.calls.find((c) => c.args.some((x) => x.startsWith("repos/o/r/pulls?")));
   assert.ok(merged?.args.some((x) => x.includes("merged_at != null")), "unmerged closed PRs are filtered out");

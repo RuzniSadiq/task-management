@@ -67,8 +67,10 @@ export interface Gh {
   reviews(pr: number): PrReview[];
   checkRuns(sha: string): CheckRun[];
   protection(branch: string): Protection;
-  /** Commits on `branch` made since this instant (ISO). */
-  branchCommits(branch: string, since: string): Commit[];
+  /** Pushes to `branch` (incl. force pushes) that GitHub recorded at or after `since` (ISO). Server-side time. */
+  branchPushes(branch: string, since: string): Push[];
+  /** Commits reachable from `after` but not from `before`. */
+  compare(before: string, after: string): Commit[];
   /** Numbers of PRs merged into `branch` that contain this commit. */
   mergedPrsOf(sha: string, branch: string): number[];
   ensureLabel(): void;
@@ -123,6 +125,8 @@ export interface Audit {
   /** Set when a whole-run read failed; the result is then fail. */
   errors: string[];
 }
+
+export interface Push { before: string; after: string; timestamp: string }
 
 export interface Options { repo: string; run: Run; now: () => string; since: string; config: DeliveryConfig }
 
@@ -361,10 +365,22 @@ export function audit(gh: Gh, opts: Options): Audit {
       heading: `Live branch protection of \`${cfg.defaultBranch}\` does not equal .gibson-delivery.json.` });
   }
 
-  // direct pushes: commits on the branch with no merged PR
-  let commits: Commit[] | undefined;
-  try { commits = gh.branchCommits(cfg.defaultBranch, opts.since); } catch (e) { errors.push(`could not list commits on ${cfg.defaultBranch}: ${errText(e)}`); }
-  for (const c of commits ?? []) {
+  // direct pushes: commits that reached the branch in the window (by GitHub's push record, not by the
+  // commit's own author/committer date, which the pusher controls) with no merged PR
+  const commits: Commit[] = [];
+  const seen = new Set<string>();
+  try {
+    const sinceMs = Date.parse(opts.since);
+    for (const push of gh.branchPushes(cfg.defaultBranch, opts.since)) {
+      const at = Date.parse(push.timestamp);
+      if (Number.isNaN(at)) throw new Error(`push to ${cfg.defaultBranch} has no valid timestamp`);
+      if (at < sinceMs) continue;
+      try {
+        for (const c of gh.compare(push.before, push.after)) if (!seen.has(c.sha)) { seen.add(c.sha); commits.push(c); }
+      } catch (e) { errors.push(`could not list the commits of push ${push.before.slice(0, 7)}..${push.after.slice(0, 7)}: ${errText(e)}`); }
+    }
+  } catch (e) { errors.push(`could not list pushes to ${cfg.defaultBranch}: ${errText(e)}`); }
+  for (const c of commits) {
     const reasons: string[] = [];
     const merged = gather(() => gh.mergedPrsOf(c.sha, cfg.defaultBranch), `pull requests of ${c.sha}`, (r) => reasons.push(r));
     if (merged !== undefined && merged.length === 0) reasons.push(`commit ${c.sha} is on ${cfg.defaultBranch} with no associated merged pull request (direct push)`);
@@ -400,8 +416,10 @@ export function ghCli(repo: string): Gh {
     checkRuns: (sha) => list<CheckRun>(`repos/${repo}/commits/${sha}/check-runs?per_page=100`,
       ".check_runs[] | {id, name, status, conclusion, started_at}"),
     protection: (branch) => JSON.parse(gh(["api", `repos/${repo}/branches/${encodeURIComponent(branch)}/protection`])) as Protection,
-    branchCommits: (branch, since) => list<Commit>(`repos/${repo}/commits?sha=${encodeURIComponent(branch)}&since=${encodeURIComponent(since)}&per_page=100`,
-      ".[] | {sha, message: .commit.message}"),
+    branchPushes: (branch, since) => list<Push>(`repos/${repo}/activity?ref=${encodeURIComponent(`refs/heads/${branch}`)}&per_page=100`,
+      '.[] | select(.activity_type == "push" or .activity_type == "force_push") | {before, after, timestamp}')
+      .filter((p) => !(Date.parse(p.timestamp) < Date.parse(since))),
+    compare: (before, after) => list<Commit>(`repos/${repo}/compare/${before}...${after}?per_page=100`, ".commits[] | {sha, message: .commit.message}"),
     mergedPrsOf: (sha, branch) => list<number>(`repos/${repo}/commits/${sha}/pulls?per_page=100`,
       `.[] | select(.merged_at != null and .base.ref == ${JSON.stringify(branch)}) | .number`),
     ensureLabel: () => {
