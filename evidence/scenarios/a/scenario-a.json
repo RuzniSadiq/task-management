@@ -1,0 +1,84 @@
+{
+  "schema": "task-management.scenario-evidence/v1",
+  "scenario": "A",
+  "recorded_at": "2026-11-05T07:24:46Z",
+  "repository": "RuzniSadiq/task-management",
+  "commit": "ff6f62a04787c701cc5b5ecc903c868d507acc2a",
+  "requirement": "The application must support creating tasks, listing tasks and updating task status. It should persist its data locally and include automated tests.",
+  "plan": "https://github.com/RuzniSadiq/task-management/issues/26",
+  "delivered_by": [
+    {
+      "pr": 30,
+      "title": "feat(#27): task store with local JSON persistence",
+      "url": "https://github.com/RuzniSadiq/task-management/pull/30",
+      "state": "MERGED",
+      "merged_at": "2026-11-04T15:50:34Z",
+      "merge_commit": "834c74399bd19212db3ced7f69809a84a22e1907",
+      "author": "RuzniSadiq",
+      "agent_vendors": [
+        "claude"
+      ],
+      "reviews": [
+        {
+          "reviewer": "ruzni-reviewer",
+          "state": "DISMISSED",
+          "commit": "d4884b4ae5af18097e8aca7bcb671e5381f4de86",
+          "second_opinion": "codex"
+        },
+        {
+          "reviewer": "ruzni-reviewer",
+          "state": "APPROVED",
+          "commit": "11c55c9240e517284e7c8ba0346ef5c8150db08d",
+          "second_opinion": "codex"
+        }
+      ]
+    },
+    {
+      "pr": 34,
+      "title": "feat(#28): HTTP API for tasks (create, list, update status)",
+      "url": "https://github.com/RuzniSadiq/task-management/pull/34",
+      "state": "MERGED",
+      "merged_at": "2026-11-04T16:58:55Z",
+      "merge_commit": "180feb359bea9dce312f14e90e2224b71373859f",
+      "author": "RuzniSadiq",
+      "agent_vendors": [
+        "claude"
+      ],
+      "reviews": [
+        {
+          "reviewer": "ruzni-reviewer",
+          "state": "APPROVED",
+          "commit": "4a065da31e4541d3a4607db81f7a08768d31b656",
+          "second_opinion": "codex"
+        }
+      ]
+    },
+    {
+      "pr": 33,
+      "title": "WIP: claim #29 — readme-usage",
+      "url": "https://github.com/RuzniSadiq/task-management/pull/33",
+      "state": "MERGED",
+      "merged_at": "2026-11-04T17:27:19Z",
+      "merge_commit": "a0d0b366c7886aa138bf86532152201eb7f47c32",
+      "author": "RuzniSadiq",
+      "agent_vendors": [
+        "claude"
+      ],
+      "reviews": [
+        {
+          "reviewer": "ruzni-reviewer",
+          "state": "APPROVED",
+          "commit": "b3c597b50a127f42ca5a7bfc587aa115c0895404",
+          "second_opinion": "codex"
+        }
+      ]
+    }
+  ],
+  "checks": {
+    "app_create_list_patch": "see app-demo.txt",
+    "persists_across_restart": true,
+    "tests_passed": 325,
+    "tests_failed": 0
+  },
+  "result": "pass"
+}

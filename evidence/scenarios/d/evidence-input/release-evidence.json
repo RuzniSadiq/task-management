@@ -1,0 +1,74 @@
+{
+  "schema": "task-management.control-evidence/v1",
+  "event": "release.published",
+  "recorded_at": "2026-11-04T19:52:46.635Z",
+  "artefact": {
+    "name": "task-management-0.1.0.tgz",
+    "sha256": "7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da",
+    "tag": "v0.1.0",
+    "commit": "69671140ea146a91059ad5f38f5d293120ff0f98"
+  },
+  "run": {
+    "url": "https://github.com/RuzniSadiq/task-management/actions/runs/41900596118",
+    "attempt": "1"
+  },
+  "triggered_by": "RuzniSadiq",
+  "approvals": [
+    {
+      "comment": "",
+      "login": "RuzniSadiq",
+      "state": "approved"
+    }
+  ],
+  "provenance": {
+    "type": "sigstore build-provenance attestation",
+    "verify": "gh attestation verify task-management-0.1.0.tgz --repo RuzniSadiq/task-management"
+  },
+  "checks": {
+    "ancestor-of-main": "pass",
+    "tag-matches-version": "pass",
+    "typecheck": "pass",
+    "lint": "pass",
+    "test": "pass",
+    "build": "pass"
+  },
+  "controls": [
+    {
+      "id": "SDLC-PREV-012",
+      "catalog": "FINOS SDLC Common Controls",
+      "version": "0.2",
+      "name": "Deployment Gating",
+      "result": "pass",
+      "evidence": "checks"
+    },
+    {
+      "id": "SDLC-PREV-019",
+      "catalog": "FINOS SDLC Common Controls",
+      "name": "Version Release Approval Gating",
+      "result": "pass",
+      "evidence": "approvals"
+    },
+    {
+      "id": "SDLC-PREV-003",
+      "catalog": "FINOS SDLC Common Controls",
+      "name": "Software Artifact Provenance",
+      "result": "pass",
+      "evidence": "provenance"
+    },
+    {
+      "id": "SDLC-PREV-002",
+      "catalog": "FINOS SDLC Common Controls",
+      "name": "Content Addressable Identities",
+      "result": "pass",
+      "evidence": "artefact.sha256"
+    },
+    {
+      "id": "MI-24",
+      "catalog": "FINOS AI Governance Framework",
+      "version": "v3",
+      "name": "Human-in-the-Loop Action Approval Gate",
+      "result": "pass",
+      "evidence": "approvals"
+    }
+  ]
+}

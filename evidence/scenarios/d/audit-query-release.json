@@ -1,0 +1,43 @@
+{
+  "query": "v0.1.0",
+  "found": true,
+  "resolved": {
+    "commit": "69671140ea146a91059ad5f38f5d293120ff0f98",
+    "tag": "v0.1.0"
+  },
+  "change": null,
+  "approval": null,
+  "checks": null,
+  "release": {
+    "tag": "v0.1.0",
+    "commit": "69671140ea146a91059ad5f38f5d293120ff0f98",
+    "artefact": "task-management-0.1.0.tgz",
+    "sha256": "7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da",
+    "approved_by": [
+      "RuzniSadiq"
+    ],
+    "triggered_by": "RuzniSadiq",
+    "recorded_at": "2026-11-04T19:52:46.635Z",
+    "checks": {
+      "ancestor-of-main": "pass",
+      "tag-matches-version": "pass",
+      "typecheck": "pass",
+      "lint": "pass",
+      "test": "pass",
+      "build": "pass"
+    }
+  },
+  "verification": {
+    "reverified": true,
+    "result": "pass",
+    "recorded_at": "2026-11-05T07:23:24.549Z",
+    "since_release": true,
+    "source": "verify-release-evidence.json"
+  },
+  "warnings": [],
+  "evidence_files": [
+    "control-evidence.jsonl",
+    "release-evidence.json",
+    "verify-release-evidence.json"
+  ]
+}

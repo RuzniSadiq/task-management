@@ -1,0 +1,24 @@
+# Scenario A demo 2026-11-05T07:24:37Z commit=ff6f62a04787c701cc5b5ecc903c868d507acc2a node=v24.11.0
+$ curl -X POST localhost:3917/tasks -H content-type: application/json -d {"title":"Write the demo"}
+{"id":"681ccb55-b8a6-4e39-a165-41c9a5862832","title":"Write the demo","status":"todo","createdAt":"2026-11-05T07:24:37.552Z","updatedAt":"2026-11-05T07:24:37.552Z"} [HTTP 201]
+$ curl -X POST localhost:3917/tasks -H content-type: application/json -d {"title":"Review the plan"}
+{"id":"739a494b-784b-4c2e-81e3-e4cdb0085d35","title":"Review the plan","status":"todo","createdAt":"2026-11-05T07:24:37.572Z","updatedAt":"2026-11-05T07:24:37.572Z"} [HTTP 201]
+$ curl localhost:3917/tasks
+[{"id":"681ccb55-b8a6-4e39-a165-41c9a5862832","title":"Write the demo","status":"todo","createdAt":"2026-11-05T07:24:37.552Z","updatedAt":"2026-11-05T07:24:37.552Z"},{"id":"739a494b-784b-4c2e-81e3-e4cdb0085d35","title":"Review the plan","status":"todo","createdAt":"2026-11-05T07:24:37.572Z","updatedAt":"2026-11-05T07:24:37.572Z"}] [HTTP 200]
+$ curl -X PATCH localhost:3917/tasks/681ccb55-b8a6-4e39-a165-41c9a5862832/status -H content-type: application/json -d {"status":"done"}
+{"id":"681ccb55-b8a6-4e39-a165-41c9a5862832","title":"Write the demo","status":"done","createdAt":"2026-11-05T07:24:37.552Z","updatedAt":"2026-11-05T07:24:37.607Z"} [HTTP 200]
+--- error cases
+$ curl -X POST localhost:3917/tasks -H content-type: application/json -d {"title":""}
+{"error":"title must not be blank"} [HTTP 400]
+$ curl -X PATCH localhost:3917/tasks/nope/status -H content-type: application/json -d {"status":"done"}
+{"error":"task not found"} [HTTP 404]
+$ curl -X DELETE localhost:3917/tasks
+{"error":"method not allowed; use GET, POST"} [HTTP 405]
+--- restart the server and list again (persistence)
+$ curl localhost:3917/tasks
+[{"id":"681ccb55-b8a6-4e39-a165-41c9a5862832","title":"Write the demo","status":"done","createdAt":"2026-11-05T07:24:37.552Z","updatedAt":"2026-11-05T07:24:37.607Z"},{"id":"739a494b-784b-4c2e-81e3-e4cdb0085d35","title":"Review the plan","status":"todo","createdAt":"2026-11-05T07:24:37.572Z","updatedAt":"2026-11-05T07:24:37.572Z"}] [HTTP 200]
+--- automated tests
+# tests 325
+# pass 325
+# fail 0
+# skipped 0

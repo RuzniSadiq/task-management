@@ -1,0 +1,15 @@
+# 2026-11-05T07:22:52Z commit=ff6f62a04787c701cc5b5ecc903c868d507acc2a: verify-release against v0.1.0 with the tarball altered in transit (simulated violation)
+[dry-run] would open or comment: control-finding: release v0.1.0 failed re-verification
+FAIL v0.1.0
+  - task-management-0.1.0.tgz: digest mismatch vs SHA256SUMS: expected 7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da, observed 2f966001b2727e73f415342e4edf263e94d8232578f05ed55683a2dd5f266ed4
+  - task-management-0.1.0.tgz: digest mismatch vs release-evidence.json: expected 7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da, observed 2f966001b2727e73f415342e4edf263e94d8232578f05ed55683a2dd5f266ed4
+  - task-management-0.1.0.tgz: attestation verify failed for task-management-0.1.0.tgz: Error: HTTP 404: Not Found (https://api.github.com/repos/RuzniSadiq/task-management/attestations/sha256:2f966001b2727e73f415342e4edf263e94d8232578f05ed55683a2dd5f266ed4?per_page=30&predicate_type=https%3A%2F%2Fslsa.dev%2Fprovenance%2Fv1)
+  task-management-0.1.0.tgz sha256 2f966001b2727e73f415342e4edf263e94d8232578f05ed55683a2dd5f266ed4
+finding opened: #0 (v0.1.0)
+verify-release: fail (1 release(s)); evidence in evidence/scenarios/c/verify-release-evidence.tampered.json
+exit=1
+# control run: same detector, untouched release
+PASS v0.1.0
+  task-management-0.1.0.tgz sha256 7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da
+verify-release: pass (1 release(s)); evidence in evidence/scenarios/c/verify-release-evidence.clean.json
+exit=0

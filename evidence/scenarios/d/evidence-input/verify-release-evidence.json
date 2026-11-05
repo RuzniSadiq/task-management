@@ -1,0 +1,56 @@
+{
+  "schema": "task-management.control-evidence/v1",
+  "event": "release.verified",
+  "recorded_at": "2026-11-05T07:23:24.549Z",
+  "repository": "RuzniSadiq/task-management",
+  "run": {
+    "url": "local run (no GITHUB_RUN_ID)",
+    "attempt": "1"
+  },
+  "result": "pass",
+  "releases": [
+    {
+      "tag": "v0.1.0",
+      "url": "https://github.com/RuzniSadiq/task-management/releases/tag/v0.1.0",
+      "result": "pass",
+      "artefacts": [
+        {
+          "name": "task-management-0.1.0.tgz",
+          "result": "pass",
+          "observed_sha256": "7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da",
+          "expected_sha256": {
+            "sha256sums": "7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da",
+            "release_evidence": "7bee102de1d311a0b371d69f8ddc2260ac068adfe2bfd583de738bf49ae240da"
+          },
+          "attestation": "pass",
+          "reasons": []
+        }
+      ],
+      "reasons": []
+    }
+  ],
+  "skipped": [],
+  "findings": [],
+  "controls": [
+    {
+      "id": "SDLC-PREV-003",
+      "catalog": "FINOS SDLC Common Controls",
+      "name": "Software Artifact Provenance",
+      "result": "pass",
+      "evidence": "releases[].artefacts[].attestation"
+    },
+    {
+      "id": "SDLC-PREV-002",
+      "catalog": "FINOS SDLC Common Controls",
+      "name": "Content Addressable Identities",
+      "result": "pass",
+      "evidence": "releases[].artefacts[].observed_sha256"
+    },
+    {
+      "id": "OP-007",
+      "name": "Monitoring",
+      "result": "pass",
+      "evidence": "findings"
+    }
+  ]
+}
