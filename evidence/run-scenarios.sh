@@ -2,7 +2,8 @@
 # Reproduces the assessment scenarios A-D. Every file written under evidence/scenarios/ is the output of a
 # real execution (the app, GitHub's recorded check results, the real verify-release detector against the
 # real v0.1.0 release, audit-query over retained evidence). Nothing here writes to GitHub: no issues,
-# releases, labels or pushes. Needs: node >= 22.18, gh (authenticated, read access), jq, curl.
+# releases, labels or pushes. Needs: node >= 22.18, gh (authenticated; a read-only token
+# is enough, see evidence/README.md), jq, curl.
 #
 #   evidence/run-scenarios.sh            run all four scenarios
 #   evidence/run-scenarios.sh a c        run only some
@@ -32,7 +33,14 @@ selftest_b() {
   check fail SKIPPED COMPLETED '[]' "skipped gate"
   check fail "" IN_PROGRESS '[]' "gate still running"
   check fail FAILURE COMPLETED '[]' "unexpected failure"
-  [ $bad -eq 0 ] && echo "selftest B: ok (8 cases)"; return $bad
+  [ $bad -eq 0 ] && echo "selftest B: ok (8 cases)"
+  # D tolerance: only an unreadable branch-protection record is ignored; a failing PR record counts, a waived one does not.
+  dcase() { local got; got="$(jq -sc "$D_OTHER_FAIL" <<<"$2")"; [ "$got" = "$1" ] || { echo "selftest D: $3: expected $1, got $got"; bad=1; }; }
+  dcase 0 '{"result":"fail","control":{"check":"branch-protection"}}' "unreadable protection is tolerated"
+  dcase 1 '{"result":"fail","control":{"check":"required-checks-green"}}' "a failing PR check is counted"
+  dcase 0 '{"result":"fail","control":{"check":"vendor-separation"},"waiver":{"pr":48}}' "a waived failure is not counted"
+  dcase 1 '{"result":"fail","control":{"check":"no-direct-push"}}' "a direct push is counted"
+  [ $bad -eq 0 ] && echo "selftest D: ok (4 cases)"; return $bad
 }
 
 WHICH=("$@"); [ ${#WHICH[@]} -eq 0 ] && WHICH=(a b c d)
@@ -43,6 +51,9 @@ done
 want() { for w in "${WHICH[@]}"; do [ "$w" = "$1" ] && return 0; done; return 1; }
 mkdir -p "$OUT"/{a,b,c,d}
 RESULTS=()
+
+# Scenario D: unwaived failing records other than branch-protection (the only one a read-only token may cause).
+D_OTHER_FAIL='[.[]|select(.result=="fail" and (.waiver==null) and (.control.check!="branch-protection"))]|length'
 
 # Verdict for one canary PR (input: gh pr view JSON). Every required check must be present, completed, and either
 # SUCCESS or exactly an expected FAILURE; CANCELLED, TIMED_OUT, SKIPPED or anything else is not a pass.
@@ -134,20 +145,24 @@ scenario_a() {
 scenario_b() {
   local B="$OUT/b" C='[]' n exp
   # The rule under test: the checks branch protection requires, read live and compared to the declared policy.
-  local REQ REQ_OK=false WANT
+  # GET /branches/main is readable without administration rights (GET .../protection is not), so a reviewer's
+  # read-only token reproduces this. enforcement_level "everyone" means admins are bound by the checks too.
+  local REQ REQ_OK=false WANT LEVEL
   WANT="$(jq -c '.requiredContexts|sort' .gibson-delivery.json)"
-  if REQ="$(gh api "repos/$REPO/branches/main/protection/required_status_checks" --jq '.contexts' 2>/dev/null)" \
+  if REQ="$(gh api "repos/$REPO/branches/main" --jq '.protection.required_status_checks.contexts' 2>/dev/null)" \
      && [ "$(jq -c 'sort' <<<"$REQ")" = "$WANT" ]; then REQ_OK=true; else REQ="${REQ:-[]}"; fi
+  LEVEL="$(gh api "repos/$REPO/branches/main" --jq '.protection.required_status_checks.enforcement_level' 2>/dev/null || true)"
+  [ "$LEVEL" = everyone ] || REQ_OK=false
   # PR number : exact set of required checks that must fail (a canary may trip more than its named rule)
   for pair in '6:[]' '7:["test-integrity"]' '8:["gate","test-integrity"]' '9:["gate"]' '10:["DCO"]'; do
     n="${pair%%:*}"; exp="${pair#*:}"
     C="$(jq --argjson p "$(gh pr view "$n" --repo "$REPO" --json number,title,url,state,headRefOid,statusCheckRollup |
       jq --argjson exp "$exp" --argjson want "$WANT" "$B_FILTER")" '. + [$p]' <<<"$C")"
   done
-  jq -n --arg at "$(NOW)" --arg repo "$REPO" --argjson req "$REQ" --argjson reqok "$REQ_OK" --argjson want "$WANT" --argjson c "$C" \
+  jq -n --arg at "$(NOW)" --arg repo "$REPO" --argjson req "$REQ" --argjson reqok "$REQ_OK" --argjson want "$WANT" --argjson c "$C" --arg level "${LEVEL:-unknown}" \
     '{schema:"task-management.scenario-evidence/v1",scenario:"B",recorded_at:$at,repository:$repo,
       rule:"Branch protection on main requires these checks; a PR with a failing required check cannot merge",
-      required_checks:{live:$req,declared:$want,match:$reqok},controlled_failures:$c,
+      required_checks:{live:$req,declared:$want,enforcement_level:$level,source:"GET /repos/{repo}/branches/main (no admin rights needed)",match:$reqok},controlled_failures:$c,
       related:["evidence/P2-agent-least-privilege.json (direct push refused, restricted token refused, repo-boundary guard)"],
       result:(if $reqok and ($c|length)==5 and ($c|all(.result=="pass")) then "pass" else "fail" end)}' > "$B/scenario-b.json"
   RESULTS+=("B $(jq -r .result "$B/scenario-b.json")")
@@ -202,9 +217,20 @@ scenario_d() {
   rm -rf "$D"; mkdir -p "$IN"          # nothing from an earlier run can feed this one
   step() { "$@" || { echo "scenario D: failed: $*" >&2; ok=false; }; }
   step gh release download "$TAG" --repo "$REPO" --pattern release-evidence.json --dir "$IN" --clobber
-  # verify-release and control-audit exit 1 when they find violations; here they must pass and write evidence
+  # verify-release must pass. control-audit must write its evidence; it exits 1 for any unwaived failure. The one
+  # failure a read-only token causes is the branch-protection record ("could not read", fail closed, never a pass,
+  # because GET .../protection needs administration rights). That record is tolerated here and nothing else is:
+  # any other unwaived failing record fails the scenario. With an admin token the exit is 0 and nothing is tolerated.
   step node scripts/verify-release.ts --repo "$REPO" --dry-run --out "$IN/verify-release-evidence.json" >/dev/null
-  step node scripts/control-audit.ts --repo "$REPO" --since "$SINCE" --dry-run --out "$IN/control-evidence.jsonl" >/dev/null
+  local rc_ca=0; node scripts/control-audit.ts --repo "$REPO" --since "$SINCE" --dry-run --out "$IN/control-evidence.jsonl" >/dev/null || rc_ca=$?
+  local other_fail=-1 prot_unreadable=false
+  if [ -s "$IN/control-evidence.jsonl" ]; then
+    other_fail="$(jq -s "$D_OTHER_FAIL" "$IN/control-evidence.jsonl")"
+    jq -se 'any(.[];.control.check=="branch-protection" and .result=="fail" and (.reasons|any(test("could not read branch protection"))))' "$IN/control-evidence.jsonl" >/dev/null && prot_unreadable=true
+  fi
+  if [ "$rc_ca" -ne 0 ] && ! { [ "$rc_ca" -eq 1 ] && [ "$other_fail" = 0 ] && $prot_unreadable; }; then
+    echo "scenario D: control-audit exit $rc_ca with $other_fail unwaived failure(s) besides protection" >&2; ok=false
+  fi
   for f in release-evidence.json verify-release-evidence.json control-evidence.jsonl; do
     [ -s "$IN/$f" ] || { echo "scenario D: missing input $f" >&2; ok=false; }
   done
@@ -220,10 +246,11 @@ scenario_d() {
         and (.change.merge_sha|type=="string") and (.approval.reviewer|type=="string") and .approval.independent==true and .checks.result=="pass" and (.checks.passed|length)>0' "$D/audit-query-commit.json" >/dev/null 2>&1 \
      && jq -e --arg tag "$TAG" '.found==true and .release.tag==$tag and (.release.sha256|test("^[0-9a-f]{64}$")) and (.release.approved_by|length)>0 and .verification.result=="pass" and .verification.reverified==true' "$D/audit-query-release.json" >/dev/null 2>&1
   then answers_ok=true; fi
-  jq -n --arg at "$(NOW)" --arg sha "${SHA:-}" --arg tag "$TAG" --argjson pr "$PRN" --argjson rc1 "$rc1" --argjson rc2 "$rc2" --argjson inputs_ok "$ok" --argjson answers_ok "$answers_ok" \
+  jq -n --arg at "$(NOW)" --arg sha "${SHA:-}" --arg tag "$TAG" --argjson pr "$PRN" --argjson rc1 "$rc1" --argjson rc2 "$rc2" --argjson inputs_ok "$ok" --argjson answers_ok "$answers_ok" --argjson rcca "$rc_ca" --argjson unread "$prot_unreadable" --argjson other "$other_fail" \
     '{schema:"task-management.scenario-evidence/v1",scenario:"D",recorded_at:$at,
       questions:["which agent/vendor acted and who approved","which software or artefact","which FINOS control was evaluated","pass, fail or blocked","what evidence supports it"],
       inputs_ok:$inputs_ok,
+      control_audit:{exit:$rcca,branch_protection_unreadable_with_this_token:$unread,other_unwaived_failures:$other},
       commit_query:{sha:$sha,pr:$pr,exit:$rc1,output:"audit-query-commit.json"},
       release_query:{tag:$tag,exit:$rc2,output:"audit-query-release.json"},
       answers_complete:$answers_ok,

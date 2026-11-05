@@ -1,7 +1,7 @@
 {
   "schema": "task-management.scenario-evidence/v1",
   "scenario": "D",
-  "recorded_at": "2026-11-05T08:53:59Z",
+  "recorded_at": "2026-11-05T10:08:11Z",
   "questions": [
     "which agent/vendor acted and who approved",
     "which software or artefact",
@@ -10,6 +10,11 @@
     "what evidence supports it"
   ],
   "inputs_ok": true,
+  "control_audit": {
+    "exit": 1,
+    "branch_protection_unreadable_with_this_token": true,
+    "other_unwaived_failures": 0
+  },
   "commit_query": {
     "sha": "575356479e3f15ac241731ce224abac0ad106204",
     "pr": 62,

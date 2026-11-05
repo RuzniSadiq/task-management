@@ -68,13 +68,13 @@ reliable evidence of what happened?
 
     npm ci
     npm run typecheck && npm run lint && npm test && npm run build    # the green gate
-    evidence/run-scenarios.sh                                         # scenarios A to D
+    evidence/run-scenarios.sh                                         # scenarios A to D (a read-only gh token is enough)
 
 | Scenario | What it shows | Where |
 |---|---|---|
 | A: successful delivery | The app is created, listed, updated, survives a restart; the full test suite passes; the PRs, agent vendor and independent reviews that built it | `evidence/scenarios/a/` |
 | B: preventative block | Canary PRs #6 to #10 (clean, deleted test, skipped test, failing assertion, unsigned commit) each fail exactly their expected required checks and cannot merge; the rule is the named required check | `evidence/scenarios/b/`, `evidence/P2-agent-least-privilege.json` |
-| C: detective finding | `verify-release` fails a v0.1.0 tarball altered after release (digest mismatch and attestation), and passes the untouched release | `evidence/scenarios/c/` |
+| C: detective finding | `verify-release` fails a v0.1.0 tarball altered after release (digest mismatch and attestation), and passes the untouched release. A real instance: the scheduled run found the published asset replaced and opened [#47](https://github.com/RuzniSadiq/task-management/issues/47) (run 41912866273); the asset was restored and re-verified (run 41913993276) | `evidence/scenarios/c/` |
 | D: audit evidence | `audit-query` answers for a commit and for v0.1.0 from retained evidence files only | `evidence/scenarios/d/` |
 
 The detectors also run in CI: `control-audit` and `verify-release` (daily, and on release events). Their
@@ -89,7 +89,7 @@ findings are `control-finding` issues.
   artefacts; nothing signs it or stores it write-once.
 - **Detection latency.** Replacing a release asset does not reliably emit an event, so `verify-release`
   can take up to about 24 hours to notice.
-- **Scenario C is a simulated violation.** The tarball is altered in transit by a shim so the real
+- **Scenario C is re-run as a simulated violation** (the real detection is issue #47, above). The tarball is altered in transit by a shim so the real
   detector and real attestation run without changing the real release.
 - **The audit window starts at 2026-11-04T15:00Z**, the first PR merged under the Gibson rules. Earlier
   PRs have reviewed waivers in `control-waivers.json`; the repository's root commit has no PR.

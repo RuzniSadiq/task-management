@@ -1,7 +1,7 @@
 {
   "schema": "task-management.scenario-evidence/v1",
   "scenario": "B",
-  "recorded_at": "2026-11-05T08:37:42Z",
+  "recorded_at": "2026-11-05T10:07:16Z",
   "repository": "RuzniSadiq/task-management",
   "rule": "Branch protection on main requires these checks; a PR with a failing required check cannot merge",
   "required_checks": {
@@ -17,6 +17,8 @@
       "security-fast",
       "test-integrity"
     ],
+    "enforcement_level": "everyone",
+    "source": "GET /repos/{repo}/branches/main (no admin rights needed)",
     "match": true
   },
   "controlled_failures": [
