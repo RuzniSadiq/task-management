@@ -896,3 +896,18 @@ test("#69 unknown facts are null and results are unchanged: a failed read, an un
   assert.deepEqual(failing.records.find((x) => x.subject.pr === 82)?.actors?.checks, {});
   assert.equal(failing.result, "fail");
 });
+
+test("#69 tied newest runs of one check that disagree are recorded as ambiguous, never as either outcome", () => {
+  const runs = [...cfg.requiredContexts.map((c) => green(c)), { ...green("gate"), id: 99, conclusion: "failure" }];
+  const a = audit(fakeGh({ prs: [goodPr(83, { runs })] }).gh, opts);
+  const rec = a.records.find((r) => r.subject.pr === 83 && r.control.check === "required-checks-green");
+  assert.equal(rec?.result, "fail");
+  assert.equal(rec.actors?.checks.gate, "ambiguous");
+  assert.equal(rec.actors?.checks.DCO, "success");
+  // tied runs that agree are not ambiguous
+  const agree = audit(fakeGh({ prs: [goodPr(84, { runs: [...cfg.requiredContexts.map((c) => green(c)), { ...green("gate"), id: 98 }] })] }).gh, opts);
+  assert.equal(agree.records.find((r) => r.subject.pr === 84)?.actors?.checks.gate, "success");
+  // a newer run wins over an older one
+  const newer = audit(fakeGh({ prs: [goodPr(85, { runs: [...cfg.requiredContexts.map((c) => green(c)), { ...green("gate", "2026-11-02T09:00:00Z"), id: 97, conclusion: "failure" }] })] }).gh, opts);
+  assert.equal(newer.records.find((r) => r.subject.pr === 85)?.actors?.checks.gate, "success");
+});

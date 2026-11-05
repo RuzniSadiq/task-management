@@ -274,8 +274,13 @@ export function evaluatePr(gh: Gh, pr: PrInfo, cfg: DeliveryConfig, actors?: Act
   if (runs !== undefined) {
     if (actors !== undefined) {
       for (const ctx of cfg.requiredContexts) {
-        const latest = runs.filter((r) => r.name === ctx).sort((a, b) => Date.parse(b.started_at ?? "") - Date.parse(a.started_at ?? ""))[0];
-        actors.checks[ctx] = latest === undefined ? "missing" : latest.status === "completed" ? (latest.conclusion ?? "unknown") : latest.status;
+        const mine = runs.filter((r) => r.name === ctx).sort((a, b) => Date.parse(b.started_at ?? "") - Date.parse(a.started_at ?? ""));
+        const label = (r: CheckRun): string => (r.status === "completed" ? (r.conclusion ?? "unknown") : r.status);
+        const topTime = Date.parse(mine[0]?.started_at ?? "");
+        // Runs tied for newest (or all runs, when the time is unreadable) that disagree make the outcome ambiguous,
+        // matching the fail-closed handling in requiredChecksGreen; neither outcome is recorded as authoritative.
+        const tied = Number.isNaN(topTime) ? mine : mine.filter((r) => Date.parse(r.started_at ?? "") === topTime);
+        actors.checks[ctx] = mine.length === 0 ? "missing" : new Set(tied.map(label)).size > 1 ? "ambiguous" : label(mine[0] as CheckRun);
       }
     }
     const green = requiredChecksGreen(runs, cfg.requiredContexts);
