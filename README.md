@@ -40,8 +40,8 @@ reliable evidence of what happened?
 
 ### How the Gibson is used
 
-- The Gibson loop (`scripts/loop.sh`, run from a pinned local checkout) drives each issue through its
-  hats. Each task is claimed (`claim.sh`) as one branch and one worktree, and the claim line lives in the PR body.
+- The Gibson loop (the Gibson's own `scripts/loop.sh`, run from a pinned local checkout of The Gibson, not from this
+  repository) drives each issue through its hats. Each task is claimed (the Gibson's `claim.sh`) as one branch and one worktree, and the claim line lives in the PR body.
 - **Development and evaluation are separated.** The author is Claude; the reviewer is a different vendor
   (Codex), chosen by the review lane, which refuses a PR unless every commit carries exactly one
   `Agent-Vendor` trailer. The reviewer token is read only by the review lane, never by the builder. A
@@ -73,7 +73,7 @@ reliable evidence of what happened?
 | Scenario | What it shows | Where |
 |---|---|---|
 | A: successful delivery | The app is created, listed, updated, survives a restart; the full test suite passes; the PRs, agent vendor and independent reviews that built it | `evidence/scenarios/a/` |
-| B: preventative block | Canary PRs #6 to #10 each trip one required check (deleted test, skipped test, failing assertion, unsigned commit) and cannot merge; the rule is the named required check | `evidence/scenarios/b/`, `evidence/P2-agent-least-privilege.json` |
+| B: preventative block | Canary PRs #6 to #10 (clean, deleted test, skipped test, failing assertion, unsigned commit) each fail exactly their expected required checks and cannot merge; the rule is the named required check | `evidence/scenarios/b/`, `evidence/P2-agent-least-privilege.json` |
 | C: detective finding | `verify-release` fails a v0.1.0 tarball altered after release (digest mismatch and attestation), and passes the untouched release | `evidence/scenarios/c/` |
 | D: audit evidence | `audit-query` answers for a commit and for v0.1.0 from retained evidence files only | `evidence/scenarios/d/` |
 
@@ -93,8 +93,10 @@ findings are `control-finding` issues.
   detector and real attestation run without changing the real release.
 - **The audit window starts at 2026-11-04T15:00Z**, the first PR merged under the Gibson rules. Earlier
   PRs have reviewed waivers in `control-waivers.json`; the repository's root commit has no PR.
-- **Audit records do not yet carry identities.** `control-audit` records verdicts, so `audit-query`
-  reports the merge commit, author vendor and reviewer login as unavailable rather than guessing.
+- **Identities are recorded per PR, not per action.** `control-audit` records the author, agent vendor,
+  reviewer, merge commit and check conclusions for each merged PR (the `actors` object). It does not record
+  the model version or the agent run id, and evidence written before that field existed reports those
+  facts as unavailable rather than guessing.
 - **FINOS labels.** The FINOS catalogues are pre-alpha. Several labels in the code do not match the catalogue
   entry of the same id; they are listed in `CONTROLS.md` and tracked in
   [#64](https://github.com/RuzniSadiq/task-management/issues/64).
@@ -324,7 +326,7 @@ one PR, its full 40-character head SHA, one check and a written rationale. There
 - A missing file means no waivers. An unreadable or malformed file stops the run with exit code 2.
 - A waiver is approved by the pull request that adds it: branch protection requires the independent
   review and the commit history records who merged it.
-- The scheduled workflow audits from `--since 2026-11-04T15:00:00Z` (see `control-audit.yml`). Running
+- The scheduled workflow audits from `--since 2026-11-04T15:00:00Z` (see `.github/workflows/control-audit.yml`). Running
   with an earlier `--since` also reports the repository's root commit (`9bcce1f`, "chore: initialize
   project"), which has no pull request because it created the history; that is not waived.
 
