@@ -41,32 +41,32 @@
     "failure_reasons": [],
     "controls": [
       {
-        "id": "SDLC-SEC-008",
+        "id": "SDLC-PREV-008",
         "check": "merged-via-pr",
         "result": "pass"
       },
       {
-        "id": "SDLC-SEC-008",
+        "id": "SDLC-PREV-001",
         "check": "independent-approval-at-head",
         "result": "pass"
       },
       {
-        "id": "RC-005",
+        "id": "SDLC-PREV-012",
         "check": "required-checks-green",
         "result": "pass"
       },
       {
-        "id": "MI-21",
+        "id": "SDLC-PREV-008",
         "check": "dco-signoff",
         "result": "pass"
       },
       {
-        "id": "MI-4",
+        "id": "SDLC-PREV-023",
         "check": "agent-vendor-trailer",
         "result": "pass"
       },
       {
-        "id": "MI-4",
+        "id": "SDLC-PREV-001",
         "check": "vendor-separation",
         "result": "pass"
       }

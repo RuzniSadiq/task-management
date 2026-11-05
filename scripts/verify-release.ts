@@ -16,7 +16,7 @@
 // FINOS controls evaluated here:
 //   SDLC-PREV-003 Software Artifact Provenance   attestation still verifies for the served bytes
 //   SDLC-PREV-002 Content Addressable IDs        served digest equals the recorded digests
-//   OP-007        Monitoring                     the scheduled re-verification and its findings
+//   release-monitoring (local label, not a FINOS id)  the scheduled re-verification and its findings
 //
 // Usage (needs GH_TOKEN with contents:read, attestations:read, issues:write):
 //   node scripts/verify-release.ts [--repo owner/name] [--out verify-release-evidence.json] [--dry-run]
@@ -198,7 +198,7 @@ export function findingBody(r: ReleaseResult, run: Run): string {
     "",
     ...r.artefacts.flatMap((a) => a.reasons.map((x) => `- ${a.name}: ${x}`)),
     "",
-    "Controls: SDLC-PREV-003 (Software Artifact Provenance), SDLC-PREV-002 (Content Addressable IDs), OP-007 (Monitoring).",
+    "Controls: SDLC-PREV-003 (Software Artifact Provenance), SDLC-PREV-002 (Content Addressable IDs), release-monitoring (local label, not a FINOS control).",
     "Do not install this release until the served artefact matches the approved digest and its attestation verifies.",
   ];
   return lines.join("\n") + "\n";
@@ -276,7 +276,7 @@ export function verifyAll(gh: Gh, opts: Options): Evidence {
     controls: [
       { id: "SDLC-PREV-003", catalog: "FINOS SDLC Common Controls", name: "Software Artifact Provenance", result: provenance, evidence: "releases[].artefacts[].attestation" },
       { id: "SDLC-PREV-002", catalog: "FINOS SDLC Common Controls", name: "Content Addressable Identities", result: digests, evidence: "releases[].artefacts[].observed_sha256" },
-      { id: "OP-007", name: "Monitoring", result, evidence: "findings" },
+      { id: "release-monitoring", catalog: "task-management (local, not a FINOS control)", name: "Release re-verification monitoring", result, evidence: "findings" },
     ],
   };
 }

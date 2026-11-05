@@ -4,7 +4,7 @@
 # FINOS controls evaluated here (logic in scripts/verify-release.ts):
 #   SDLC-PREV-003 Software Artifact Provenance  `gh attestation verify` on the downloaded tarball
 #   SDLC-PREV-002 Content Addressable IDs       recomputed sha256 vs SHA256SUMS and release-evidence.json
-#   OP-007        Monitoring                    scheduled run; a failure opens/comments a control-finding issue
+#   release-monitoring (local label, not a FINOS id)  scheduled run; a failure opens/comments a control-finding issue
 # Evidence: verify-release-evidence.json (task-management.control-evidence/v1, event release.verified),
 # uploaded as the run's verify-release-evidence artifact.
 #

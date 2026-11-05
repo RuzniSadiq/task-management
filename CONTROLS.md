@@ -17,7 +17,7 @@ FINOS references were checked against the frameworks' source repositories:
 | P5 | Test integrity and execution | preventative | SDLC-PREV-016 Test Execution and Sign-Off (mitigation, SDLC v0.2) | `.github/workflows/gibson-gate.yml`, `scripts/test-integrity.mjs`, `.agents/gate.json` | closed canary PRs #7 (deleted test), #8 (skipped test), #9 (failing test) |
 | P6 | Artefact provenance | preventative | SDLC-PREV-003 Software Artifact Provenance (mitigation, SDLC v0.1); SDLC-PREV-002 Content Addressable Identities (mitigation, SDLC v0.2) | `.github/workflows/release.yml` | release-evidence.json; SHA256SUMS; build attestation |
 | D1 | Released artefact re-verification | detective | SDLC-PREV-003 Software Artifact Provenance (mitigation, SDLC v0.1); SDLC-PREV-002 Content Addressable Identities (mitigation, SDLC v0.2); SDLC-SEC-008 Unauthorised Change (risk, SDLC v0.1) | `scripts/verify-release.ts`, `.github/workflows/verify-release.yml` | verify-release-evidence.json (task-management.control-evidence/v1) uploaded by each run; control-finding issues |
-| D2 | Delivery process audit | detective | MI-21 Agent Decision Audit and Explainability (mitigation, AIGF v3 (2026-10-26)); MI-4 AI System Observability (mitigation, AIGF v3 (2026-10-26)); SDLC-SEC-008 Unauthorised Change (risk, SDLC v0.1); SDLC-RC-005 Audit and Compliance Evidence Failure (risk, SDLC v0.1) | `scripts/control-audit.ts`, `.github/workflows/control-audit.yml` | control-evidence.jsonl uploaded by each run; control-finding issues |
+| D2 | Delivery process audit | detective | SDLC-PREV-001 Code Review (mitigation, SDLC v1.0); SDLC-PREV-008 Version Control (mitigation, SDLC v1.2); SDLC-PREV-012 Deployment Gating (mitigation, SDLC v0.2); SDLC-PREV-023 Agentic Processes Provenance (mitigation, SDLC v0.2); MI-21 Agent Decision Audit and Explainability (mitigation, AIGF v3 (2026-10-26)); MI-4 AI System Observability (mitigation, AIGF v3 (2026-10-26)); SDLC-SEC-008 Unauthorised Change (risk, SDLC v0.1); SDLC-RC-005 Audit and Compliance Evidence Failure (risk, SDLC v0.1) | `scripts/control-audit.ts`, `.github/workflows/control-audit.yml` | control-evidence.jsonl uploaded by each run; control-finding issues |
 | D3 | Audit evidence query | detective | MI-21 Agent Decision Audit and Explainability (mitigation, AIGF v3 (2026-10-26)); SDLC-RC-005 Audit and Compliance Evidence Failure (risk, SDLC v0.1) | `scripts/audit-query.ts` | its JSON output for a given commit or tag |
 
 ## P1 Deployment gating (preventative)
@@ -140,7 +140,7 @@ FINOS references were checked against the frameworks' source repositories:
 
 **Risk addressed:** A released artefact or its records are replaced after release.
 
-**How it operates:** A separate scheduled workflow downloads every published release, recomputes sha256 against SHA256SUMS and release-evidence.json, verifies the attestation is from release.yml on the release tag, fails an empty published release, and opens a control-finding issue on any mismatch.
+**How it operates:** A separate scheduled workflow downloads every published release, recomputes sha256 against SHA256SUMS and release-evidence.json, verifies the attestation is from release.yml on the release tag, fails an empty published release, and opens a control-finding issue on any mismatch. Its monitoring result is labelled `release-monitoring`, a local label, not a FINOS id.
 
 **Mechanism:** `scripts/verify-release.ts`, `.github/workflows/verify-release.yml`
 
@@ -156,11 +156,11 @@ FINOS references were checked against the frameworks' source repositories:
 
 ## D2 Delivery process audit (detective)
 
-**FINOS:** MI-21 Agent Decision Audit and Explainability (mitigation, AIGF v3 (2026-10-26)); MI-4 AI System Observability (mitigation, AIGF v3 (2026-10-26)); SDLC-SEC-008 Unauthorised Change (risk, SDLC v0.1); SDLC-RC-005 Audit and Compliance Evidence Failure (risk, SDLC v0.1)
+**FINOS:** SDLC-PREV-001 Code Review (mitigation, SDLC v1.0); SDLC-PREV-008 Version Control (mitigation, SDLC v1.2); SDLC-PREV-012 Deployment Gating (mitigation, SDLC v0.2); SDLC-PREV-023 Agentic Processes Provenance (mitigation, SDLC v0.2); MI-21 Agent Decision Audit and Explainability (mitigation, AIGF v3 (2026-10-26)); MI-4 AI System Observability (mitigation, AIGF v3 (2026-10-26)); SDLC-SEC-008 Unauthorised Change (risk, SDLC v0.1); SDLC-RC-005 Audit and Compliance Evidence Failure (risk, SDLC v0.1)
 
 **Risk addressed:** A change reaches main without the independent approval, green checks, sign-off or agent identity the policy requires, or branch protection drifts.
 
-**How it operates:** A scheduled workflow re-checks, from GitHub's records, every PR merged since the baseline (approval at the exact head, required checks, DCO, one Agent-Vendor per commit, reviewer vendor differs), the live branch protection against .gibson-delivery.json, and direct pushes. It writes JSONL evidence, files one control-finding per violation, and honours only exact, reviewed waivers.
+**How it operates:** A scheduled workflow re-checks, from GitHub's records, every PR merged since the baseline (approval at the exact head, required checks, DCO, one Agent-Vendor per commit, reviewer vendor differs), the live branch protection against .gibson-delivery.json, and direct pushes. It writes JSONL evidence, files one control-finding per violation, and honours only exact, reviewed waivers. Each check cites the FINOS mitigation it evidences (code review, version control, deployment gating, agentic processes provenance); MI-21 and MI-4 are the AI Governance Framework detective controls the evidence trail and monitoring serve.
 
 **Mechanism:** `scripts/control-audit.ts`, `.github/workflows/control-audit.yml`
 
@@ -192,15 +192,3 @@ FINOS references were checked against the frameworks' source repositories:
 **Evidence:**
 
 - its JSON output for a given commit or tag
-
-## Labels in the code that do not match the FINOS catalogue
-
-These ids or labels appear in workflows and scripts but do not describe the FINOS control of that id. They are listed so the discrepancy is visible; the registry above uses the verified references.
-
-| Label | Used in | Note |
-|---|---|---|
-| OP-007 | scripts/verify-release.ts, .github/workflows/verify-release.yml | Not an id in the FINOS SDLC catalog or the AI Governance Framework; a local label for monitoring. |
-| MI-4 | scripts/control-audit.ts, .github/workflows/control-audit.yml | Used for the Agent-Vendor trailer and vendor-separation checks. FINOS MI-4 is AI System Observability; the checks fit SDLC-PREV-023 (Agentic Processes Provenance) and SDLC-PREV-001 (Code Review) better. |
-| MI-21 | scripts/control-audit.ts, .github/workflows/control-audit.yml | Used for the DCO sign-off check. FINOS MI-21 is Agent Decision Audit and Explainability, which fits the evidence trail but not sign-off. |
-| RC-005 | scripts/control-audit.ts, .github/workflows/control-audit.yml | Used as a control id for the required-checks-green check. SDLC-RC-005 is the risk Audit and Compliance Evidence Failure; the matching mitigations are SDLC-PREV-012 and SDLC-PREV-016. |
-| SDLC-SEC-008 | scripts/control-audit.ts | Used as a control id for approval, merged-via-PR, protection and direct-push checks. It is the risk Unauthorised Change; the matching mitigations are SDLC-PREV-001 and SDLC-PREV-012. |

@@ -4,7 +4,7 @@
 # one Agent-Vendor per commit and a reviewer vendor different from the author's; that main's live
 # branch protection still equals .gibson-delivery.json; and that no commit reached main by direct push.
 #
-# FINOS controls (logic in scripts/control-audit.ts): SDLC-SEC-008, RC-005, AIGF MI-21, AIGF MI-4.
+# FINOS mitigations (logic in scripts/control-audit.ts): SDLC-PREV-001, SDLC-PREV-008, SDLC-PREV-012, SDLC-PREV-023.
 # Evidence: control-evidence.jsonl (task-management.control-evidence/v1), uploaded as the
 # control-evidence artifact. A violation opens or refreshes one `control-finding` issue.
 #

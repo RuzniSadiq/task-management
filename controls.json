@@ -18,135 +18,351 @@
       "name": "Deployment gating",
       "type": "preventative",
       "finos": [
-        { "framework": "sdlc", "id": "SDLC-PREV-012", "title": "Deployment Gating", "version": "0.2", "kind": "mitigation" },
-        { "framework": "sdlc", "id": "SDLC-SEC-008", "title": "Unauthorised Change", "version": "0.1", "kind": "risk" }
+        {
+          "framework": "sdlc",
+          "id": "SDLC-PREV-012",
+          "title": "Deployment Gating",
+          "version": "0.2",
+          "kind": "mitigation"
+        },
+        {
+          "framework": "sdlc",
+          "id": "SDLC-SEC-008",
+          "title": "Unauthorised Change",
+          "version": "0.1",
+          "kind": "risk"
+        }
       ],
       "risk": "Unreviewed or failing software reaches main or is released.",
       "operates": "Branch protection on main requires the gate, security-fast, test-integrity and DCO checks (strict), one approving review from the independent reviewer identity after the last push, and applies to admins. release.yml re-runs the gate and checks ancestry and version before publishing.",
-      "mechanism": [".gibson-delivery.json", ".github/workflows/gibson-gate.yml", ".github/workflows/dco.yml", ".github/workflows/release.yml"],
-      "verify": ["gh api repos/RuzniSadiq/task-management/branches/main/protection", "scripts/delivery-control/audit.sh --repo RuzniSadiq/task-management (The Gibson)"],
-      "evidence": ["closed canary PRs #6 to #10", "release-evidence.json attached to each release"]
+      "mechanism": [
+        ".gibson-delivery.json",
+        ".github/workflows/gibson-gate.yml",
+        ".github/workflows/dco.yml",
+        ".github/workflows/release.yml"
+      ],
+      "verify": [
+        "gh api repos/RuzniSadiq/task-management/branches/main/protection",
+        "scripts/delivery-control/audit.sh --repo RuzniSadiq/task-management (The Gibson)"
+      ],
+      "evidence": [
+        "closed canary PRs #6 to #10",
+        "release-evidence.json attached to each release"
+      ]
     },
     {
       "id": "P2",
       "name": "Agent least privilege",
       "type": "preventative",
       "finos": [
-        { "framework": "aigf", "id": "MI-18", "title": "Agent Authority Least Privilege Framework", "version": "v3", "kind": "mitigation" },
-        { "framework": "aigf", "id": "RI-24", "title": "Agent Action Authorization Bypass", "version": "v3", "kind": "risk" },
-        { "framework": "sdlc", "id": "SDLC-SEC-013", "title": "Non-Approved Agentic Processes", "version": "0.1", "kind": "risk" }
+        {
+          "framework": "aigf",
+          "id": "MI-18",
+          "title": "Agent Authority Least Privilege Framework",
+          "version": "v3",
+          "kind": "mitigation"
+        },
+        {
+          "framework": "aigf",
+          "id": "RI-24",
+          "title": "Agent Action Authorization Bypass",
+          "version": "v3",
+          "kind": "risk"
+        },
+        {
+          "framework": "sdlc",
+          "id": "SDLC-SEC-013",
+          "title": "Non-Approved Agentic Processes",
+          "version": "0.1",
+          "kind": "risk"
+        }
       ],
       "risk": "An agent changes protections, reads secrets or lands code outside its authority.",
       "operates": "Agents run with a fine-grained token scoped to this repository without administration, secrets, workflow or environment rights; GitHub refuses the rest. The Gibson repo-boundary guard refuses commits that leave the repository or touch gate configuration. Branch protection refuses direct pushes to main for every credential.",
-      "mechanism": ["README.md", ".gibson-delivery.json", "evidence/P2-agent-least-privilege.json"],
-      "verify": ["follow evidence/README.md, section Reproduce P2: every attempt must be refused"],
-      "evidence": ["evidence/P2-agent-least-privilege.json"]
+      "mechanism": [
+        "README.md",
+        ".gibson-delivery.json",
+        "evidence/P2-agent-least-privilege.json"
+      ],
+      "verify": [
+        "follow evidence/README.md, section Reproduce P2: every attempt must be refused"
+      ],
+      "evidence": [
+        "evidence/P2-agent-least-privilege.json"
+      ]
     },
     {
       "id": "P3",
       "name": "Human release approval",
       "type": "preventative",
       "finos": [
-        { "framework": "sdlc", "id": "SDLC-PREV-019", "title": "Version Release Approval Gating", "version": "0.2", "kind": "mitigation" },
-        { "framework": "aigf", "id": "MI-24", "title": "Human-in-the-Loop Action Approval Gate", "version": "v3", "kind": "mitigation" }
+        {
+          "framework": "sdlc",
+          "id": "SDLC-PREV-019",
+          "title": "Version Release Approval Gating",
+          "version": "0.2",
+          "kind": "mitigation"
+        },
+        {
+          "framework": "aigf",
+          "id": "MI-24",
+          "title": "Human-in-the-Loop Action Approval Gate",
+          "version": "v3",
+          "kind": "mitigation"
+        }
       ],
       "risk": "An agent-built artefact is published without a named human accepting it.",
       "operates": "The publish job of release.yml runs in the `release` environment, which needs approval by a named human before any asset is uploaded. The approval is recorded in release-evidence.json.",
-      "mechanism": [".github/workflows/release.yml"],
-      "verify": ["gh api repos/RuzniSadiq/task-management/environments/release"],
-      "evidence": ["release-evidence.json (approvals) attached to each release"]
+      "mechanism": [
+        ".github/workflows/release.yml"
+      ],
+      "verify": [
+        "gh api repos/RuzniSadiq/task-management/environments/release"
+      ],
+      "evidence": [
+        "release-evidence.json (approvals) attached to each release"
+      ]
     },
     {
       "id": "P4",
       "name": "Independent review",
       "type": "preventative",
       "finos": [
-        { "framework": "sdlc", "id": "SDLC-PREV-001", "title": "Code Review", "version": "1.0", "kind": "mitigation" }
+        {
+          "framework": "sdlc",
+          "id": "SDLC-PREV-001",
+          "title": "Code Review",
+          "version": "1.0",
+          "kind": "mitigation"
+        }
       ],
       "risk": "An agent's change is approved by the same vendor or identity that wrote it.",
       "operates": "The review lane publishes a verdict as the reviewer identity only for a PR whose commits each declare one Agent-Vendor, and always picks a reviewer of a different vendor. Branch protection requires that approval at the latest head.",
-      "mechanism": ["scripts/review-lane.ts", "scripts/review-lane-rules.ts"],
-      "verify": ["node --test test/review-lane-rules.test.ts", "node scripts/review-lane.ts --dry-run"],
-      "evidence": ["review verdicts on each merged PR", "test/review-lane-rules.test.ts"]
+      "mechanism": [
+        "scripts/review-lane.ts",
+        "scripts/review-lane-rules.ts"
+      ],
+      "verify": [
+        "node --test test/review-lane-rules.test.ts",
+        "node scripts/review-lane.ts --dry-run"
+      ],
+      "evidence": [
+        "review verdicts on each merged PR",
+        "test/review-lane-rules.test.ts"
+      ]
     },
     {
       "id": "P5",
       "name": "Test integrity and execution",
       "type": "preventative",
       "finos": [
-        { "framework": "sdlc", "id": "SDLC-PREV-016", "title": "Test Execution and Sign-Off", "version": "0.2", "kind": "mitigation" }
+        {
+          "framework": "sdlc",
+          "id": "SDLC-PREV-016",
+          "title": "Test Execution and Sign-Off",
+          "version": "0.2",
+          "kind": "mitigation"
+        }
       ],
       "risk": "A change passes the gate by deleting, skipping or weakening tests.",
       "operates": "The test-integrity job grades the PR against the merge-base copy of scripts/test-integrity.mjs and fails on deleted or skipped tests; the gate job runs typecheck, lint, test and build.",
-      "mechanism": [".github/workflows/gibson-gate.yml", "scripts/test-integrity.mjs", ".agents/gate.json"],
-      "verify": ["npm run typecheck && npm run lint && npm test && npm run build"],
-      "evidence": ["closed canary PRs #7 (deleted test), #8 (skipped test), #9 (failing test)"]
+      "mechanism": [
+        ".github/workflows/gibson-gate.yml",
+        "scripts/test-integrity.mjs",
+        ".agents/gate.json"
+      ],
+      "verify": [
+        "npm run typecheck && npm run lint && npm test && npm run build"
+      ],
+      "evidence": [
+        "closed canary PRs #7 (deleted test), #8 (skipped test), #9 (failing test)"
+      ]
     },
     {
       "id": "P6",
       "name": "Artefact provenance",
       "type": "preventative",
       "finos": [
-        { "framework": "sdlc", "id": "SDLC-PREV-003", "title": "Software Artifact Provenance", "version": "0.1", "kind": "mitigation" },
-        { "framework": "sdlc", "id": "SDLC-PREV-002", "title": "Content Addressable Identities", "version": "0.2", "kind": "mitigation" }
+        {
+          "framework": "sdlc",
+          "id": "SDLC-PREV-003",
+          "title": "Software Artifact Provenance",
+          "version": "0.1",
+          "kind": "mitigation"
+        },
+        {
+          "framework": "sdlc",
+          "id": "SDLC-PREV-002",
+          "title": "Content Addressable Identities",
+          "version": "0.2",
+          "kind": "mitigation"
+        }
       ],
       "risk": "A released artefact cannot be tied to the pipeline run and approval that produced it.",
       "operates": "release.yml signs a build attestation bound to the tarball sha256 and publishes SHA256SUMS and release-evidence.json naming the artefact by digest.",
-      "mechanism": [".github/workflows/release.yml"],
-      "verify": ["gh attestation verify <tarball> --repo RuzniSadiq/task-management --signer-workflow RuzniSadiq/task-management/.github/workflows/release.yml"],
-      "evidence": ["release-evidence.json", "SHA256SUMS", "build attestation"]
+      "mechanism": [
+        ".github/workflows/release.yml"
+      ],
+      "verify": [
+        "gh attestation verify <tarball> --repo RuzniSadiq/task-management --signer-workflow RuzniSadiq/task-management/.github/workflows/release.yml"
+      ],
+      "evidence": [
+        "release-evidence.json",
+        "SHA256SUMS",
+        "build attestation"
+      ]
     },
     {
       "id": "D1",
       "name": "Released artefact re-verification",
       "type": "detective",
       "finos": [
-        { "framework": "sdlc", "id": "SDLC-PREV-003", "title": "Software Artifact Provenance", "version": "0.1", "kind": "mitigation" },
-        { "framework": "sdlc", "id": "SDLC-PREV-002", "title": "Content Addressable Identities", "version": "0.2", "kind": "mitigation" },
-        { "framework": "sdlc", "id": "SDLC-SEC-008", "title": "Unauthorised Change", "version": "0.1", "kind": "risk" }
+        {
+          "framework": "sdlc",
+          "id": "SDLC-PREV-003",
+          "title": "Software Artifact Provenance",
+          "version": "0.1",
+          "kind": "mitigation"
+        },
+        {
+          "framework": "sdlc",
+          "id": "SDLC-PREV-002",
+          "title": "Content Addressable Identities",
+          "version": "0.2",
+          "kind": "mitigation"
+        },
+        {
+          "framework": "sdlc",
+          "id": "SDLC-SEC-008",
+          "title": "Unauthorised Change",
+          "version": "0.1",
+          "kind": "risk"
+        }
       ],
       "risk": "A released artefact or its records are replaced after release.",
-      "operates": "A separate scheduled workflow downloads every published release, recomputes sha256 against SHA256SUMS and release-evidence.json, verifies the attestation is from release.yml on the release tag, fails an empty published release, and opens a control-finding issue on any mismatch.",
-      "mechanism": ["scripts/verify-release.ts", ".github/workflows/verify-release.yml"],
-      "verify": ["node scripts/verify-release.ts --repo RuzniSadiq/task-management --dry-run", "node --test test/verify-release.test.ts"],
-      "evidence": ["verify-release-evidence.json (task-management.control-evidence/v1) uploaded by each run", "control-finding issues"]
+      "operates": "A separate scheduled workflow downloads every published release, recomputes sha256 against SHA256SUMS and release-evidence.json, verifies the attestation is from release.yml on the release tag, fails an empty published release, and opens a control-finding issue on any mismatch. Its monitoring result is labelled `release-monitoring`, a local label, not a FINOS id.",
+      "mechanism": [
+        "scripts/verify-release.ts",
+        ".github/workflows/verify-release.yml"
+      ],
+      "verify": [
+        "node scripts/verify-release.ts --repo RuzniSadiq/task-management --dry-run",
+        "node --test test/verify-release.test.ts"
+      ],
+      "evidence": [
+        "verify-release-evidence.json (task-management.control-evidence/v1) uploaded by each run",
+        "control-finding issues"
+      ]
     },
     {
       "id": "D2",
       "name": "Delivery process audit",
       "type": "detective",
       "finos": [
-        { "framework": "aigf", "id": "MI-21", "title": "Agent Decision Audit and Explainability", "version": "v3", "kind": "mitigation" },
-        { "framework": "aigf", "id": "MI-4", "title": "AI System Observability", "version": "v3", "kind": "mitigation" },
-        { "framework": "sdlc", "id": "SDLC-SEC-008", "title": "Unauthorised Change", "version": "0.1", "kind": "risk" },
-        { "framework": "sdlc", "id": "SDLC-RC-005", "title": "Audit and Compliance Evidence Failure", "version": "0.1", "kind": "risk" }
+        {
+          "framework": "sdlc",
+          "id": "SDLC-PREV-001",
+          "title": "Code Review",
+          "version": "1.0",
+          "kind": "mitigation"
+        },
+        {
+          "framework": "sdlc",
+          "id": "SDLC-PREV-008",
+          "title": "Version Control",
+          "version": "1.2",
+          "kind": "mitigation"
+        },
+        {
+          "framework": "sdlc",
+          "id": "SDLC-PREV-012",
+          "title": "Deployment Gating",
+          "version": "0.2",
+          "kind": "mitigation"
+        },
+        {
+          "framework": "sdlc",
+          "id": "SDLC-PREV-023",
+          "title": "Agentic Processes Provenance",
+          "version": "0.2",
+          "kind": "mitigation"
+        },
+        {
+          "framework": "aigf",
+          "id": "MI-21",
+          "title": "Agent Decision Audit and Explainability",
+          "version": "v3",
+          "kind": "mitigation"
+        },
+        {
+          "framework": "aigf",
+          "id": "MI-4",
+          "title": "AI System Observability",
+          "version": "v3",
+          "kind": "mitigation"
+        },
+        {
+          "framework": "sdlc",
+          "id": "SDLC-SEC-008",
+          "title": "Unauthorised Change",
+          "version": "0.1",
+          "kind": "risk"
+        },
+        {
+          "framework": "sdlc",
+          "id": "SDLC-RC-005",
+          "title": "Audit and Compliance Evidence Failure",
+          "version": "0.1",
+          "kind": "risk"
+        }
       ],
       "risk": "A change reaches main without the independent approval, green checks, sign-off or agent identity the policy requires, or branch protection drifts.",
-      "operates": "A scheduled workflow re-checks, from GitHub's records, every PR merged since the baseline (approval at the exact head, required checks, DCO, one Agent-Vendor per commit, reviewer vendor differs), the live branch protection against .gibson-delivery.json, and direct pushes. It writes JSONL evidence, files one control-finding per violation, and honours only exact, reviewed waivers.",
-      "mechanism": ["scripts/control-audit.ts", ".github/workflows/control-audit.yml"],
-      "verify": ["node scripts/control-audit.ts --repo RuzniSadiq/task-management --since 2026-11-04T15:00:00Z --dry-run", "node --test test/control-audit.test.ts"],
-      "evidence": ["control-evidence.jsonl uploaded by each run", "control-finding issues"]
+      "operates": "A scheduled workflow re-checks, from GitHub's records, every PR merged since the baseline (approval at the exact head, required checks, DCO, one Agent-Vendor per commit, reviewer vendor differs), the live branch protection against .gibson-delivery.json, and direct pushes. It writes JSONL evidence, files one control-finding per violation, and honours only exact, reviewed waivers. Each check cites the FINOS mitigation it evidences (code review, version control, deployment gating, agentic processes provenance); MI-21 and MI-4 are the AI Governance Framework detective controls the evidence trail and monitoring serve.",
+      "mechanism": [
+        "scripts/control-audit.ts",
+        ".github/workflows/control-audit.yml"
+      ],
+      "verify": [
+        "node scripts/control-audit.ts --repo RuzniSadiq/task-management --since 2026-11-04T15:00:00Z --dry-run",
+        "node --test test/control-audit.test.ts"
+      ],
+      "evidence": [
+        "control-evidence.jsonl uploaded by each run",
+        "control-finding issues"
+      ]
     },
     {
       "id": "D3",
       "name": "Audit evidence query",
       "type": "detective",
       "finos": [
-        { "framework": "aigf", "id": "MI-21", "title": "Agent Decision Audit and Explainability", "version": "v3", "kind": "mitigation" },
-        { "framework": "sdlc", "id": "SDLC-RC-005", "title": "Audit and Compliance Evidence Failure", "version": "0.1", "kind": "risk" }
+        {
+          "framework": "aigf",
+          "id": "MI-21",
+          "title": "Agent Decision Audit and Explainability",
+          "version": "v3",
+          "kind": "mitigation"
+        },
+        {
+          "framework": "sdlc",
+          "id": "SDLC-RC-005",
+          "title": "Audit and Compliance Evidence Failure",
+          "version": "0.1",
+          "kind": "risk"
+        }
       ],
       "risk": "An independent party cannot establish from records who changed what, who approved it and which checks it passed.",
       "operates": "audit-query reads only the retained evidence files (no network, no git) and answers, for a commit or release tag, which agent or vendor acted, who approved, which checks passed, which artefact was released and whether it was re-verified, reporting 'no evidence' rather than guessing.",
-      "mechanism": ["scripts/audit-query.ts"],
-      "verify": ["node scripts/audit-query.ts <sha|tag> --evidence <dir> --json", "node --test test/audit-query.test.ts"],
-      "evidence": ["its JSON output for a given commit or tag"]
+      "mechanism": [
+        "scripts/audit-query.ts"
+      ],
+      "verify": [
+        "node scripts/audit-query.ts <sha|tag> --evidence <dir> --json",
+        "node --test test/audit-query.test.ts"
+      ],
+      "evidence": [
+        "its JSON output for a given commit or tag"
+      ]
     }
-  ],
-  "label_notes": [
-    { "label": "OP-007", "used_in": "scripts/verify-release.ts, .github/workflows/verify-release.yml", "note": "Not an id in the FINOS SDLC catalog or the AI Governance Framework; a local label for monitoring." },
-    { "label": "MI-4", "used_in": "scripts/control-audit.ts, .github/workflows/control-audit.yml", "note": "Used for the Agent-Vendor trailer and vendor-separation checks. FINOS MI-4 is AI System Observability; the checks fit SDLC-PREV-023 (Agentic Processes Provenance) and SDLC-PREV-001 (Code Review) better." },
-    { "label": "MI-21", "used_in": "scripts/control-audit.ts, .github/workflows/control-audit.yml", "note": "Used for the DCO sign-off check. FINOS MI-21 is Agent Decision Audit and Explainability, which fits the evidence trail but not sign-off." },
-    { "label": "RC-005", "used_in": "scripts/control-audit.ts, .github/workflows/control-audit.yml", "note": "Used as a control id for the required-checks-green check. SDLC-RC-005 is the risk Audit and Compliance Evidence Failure; the matching mitigations are SDLC-PREV-012 and SDLC-PREV-016." },
-    { "label": "SDLC-SEC-008", "used_in": "scripts/control-audit.ts", "note": "Used as a control id for approval, merged-via-PR, protection and direct-push checks. It is the risk Unauthorised Change; the matching mitigations are SDLC-PREV-001 and SDLC-PREV-012." }
   ]
 }
