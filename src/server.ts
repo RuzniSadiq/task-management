@@ -6,6 +6,10 @@
 //   GET   /tasks?status=S     → 200, only the tasks whose status is S (todo,
 //                               in_progress or done); 400 if S is anything
 //                               else (empty, wrong case) or given twice.
+//   GET   /tasks?title=T      → 200, only the tasks whose title contains T as plain
+//                               text, ignoring case (T is trimmed; no wildcards or
+//                               regex); 400 if T is blank or given twice. Combines
+//                               with status: both must match.
 //                               Other query parameters are ignored.
 //   PATCH /tasks/:id/status   {"status": string} → 200 task
 //
@@ -152,7 +156,11 @@ async function route(store: TaskStore, request: IncomingMessage, response: Serve
       if (statuses.length > 1) {
         throw new HttpError(400, "status may be given at most once");
       }
-      sendJson(response, 200, store.list(statuses[0]));
+      const titles = searchParams.getAll("title");
+      if (titles.length > 1) {
+        throw new HttpError(400, "title may be given at most once");
+      }
+      sendJson(response, 200, store.list(statuses[0], titles[0]));
       return;
     }
     if (method === "POST") {

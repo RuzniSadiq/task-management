@@ -11,8 +11,10 @@ import { basename, dirname, join } from "node:path";
 import {
   NotFoundError,
   isTask,
+  titleContains,
   validateStatus,
   validateTitle,
+  validateTitleQuery,
   type Task,
 } from "./tasks.ts";
 
@@ -106,12 +108,18 @@ export class TaskStore {
 
   /**
    * Every task, in creation order. Returned objects are copies. With `status`
-   * given, only the tasks that have it; an invalid `status` throws
-   * ValidationError and never falls back to the unfiltered list.
+   * given, only the tasks that have it; with `title` given, only the tasks
+   * whose title contains the (trimmed) text, ignoring case. Both together
+   * must match. An invalid `status` or a blank `title` throws ValidationError
+   * and never falls back to the unfiltered list.
    */
-  list(status?: unknown): Task[] {
+  list(status?: unknown, title?: unknown): Task[] {
     const wanted = status === undefined ? undefined : validateStatus(status);
-    return this.#tasks.filter((task) => wanted === undefined || task.status === wanted).map((task) => ({ ...task }));
+    const query = title === undefined ? undefined : validateTitleQuery(title);
+    return this.#tasks
+      .filter((task) => wanted === undefined || task.status === wanted)
+      .filter((task) => query === undefined || titleContains(task.title, query))
+      .map((task) => ({ ...task }));
   }
 
   /** Validates, persists, and returns a new task. */

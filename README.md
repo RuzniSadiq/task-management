@@ -208,8 +208,22 @@ Add `?status=` to list only the tasks with that status: `todo`, `in_progress` or
 A `status` that is not one of those three values returns `400 Bad Request` with an
 `error` naming the allowed values. That includes an empty `?status=` and a different
 case such as `Done`. Giving `status` more than once (`?status=todo&status=done`) is
-also a `400`. The unfiltered list is never returned in place of an error. Other query
-parameters are ignored.
+also a `400`. The unfiltered list is never returned in place of an error.
+
+Add `?title=` to list only the tasks whose title contains that text. The match ignores
+case (`milk` finds "Buy Milk"), is on the title only, and treats the text literally:
+`%`, `*`, `.`, `?`, `[` and the like have no special meaning. Spaces around the text
+are trimmed. Tasks stay oldest first, and no match gives `[]`.
+
+    curl -i 'http://127.0.0.1:3000/tasks?title=milk'
+
+`title` and `status` can be combined; a task must match both.
+
+    curl -i 'http://127.0.0.1:3000/tasks?title=milk&status=done'
+
+A blank `title` (empty `?title=` or only whitespace) returns `400 Bad Request` with an
+`error`, and so does giving `title` more than once (`?title=a&title=b`). The unfiltered
+list is never returned in place of an error. Other query parameters are ignored.
 
 ### Update a task's status: `PATCH /tasks/:id/status`
 
