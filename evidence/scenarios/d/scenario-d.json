@@ -1,7 +1,7 @@
 {
   "schema": "task-management.scenario-evidence/v1",
   "scenario": "D",
-  "recorded_at": "2026-11-05T07:23:58Z",
+  "recorded_at": "2026-11-05T08:01:58Z",
   "questions": [
     "which agent/vendor acted and who approved",
     "which software or artefact",
@@ -9,6 +9,7 @@
     "pass, fail or blocked",
     "what evidence supports it"
   ],
+  "inputs_ok": true,
   "commit_query": {
     "sha": "575356479e3f15ac241731ce224abac0ad106204",
     "pr": 62,

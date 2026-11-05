@@ -1,9 +1,9 @@
 {
   "schema": "task-management.scenario-evidence/v1",
   "scenario": "A",
-  "recorded_at": "2026-11-05T07:24:46Z",
+  "recorded_at": "2026-11-05T08:00:45Z",
   "repository": "RuzniSadiq/task-management",
-  "commit": "ff6f62a04787c701cc5b5ecc903c868d507acc2a",
+  "commit": "a512b9591e2ae0a22340a7894dd2da5cc05404f7",
   "requirement": "The application must support creating tasks, listing tasks and updating task status. It should persist its data locally and include automated tests.",
   "plan": "https://github.com/RuzniSadiq/task-management/issues/26",
   "delivered_by": [
@@ -74,9 +74,41 @@
       ]
     }
   ],
+  "api_assertions": [
+    {
+      "name": "create task returns 201 with id, title and status todo",
+      "pass": true
+    },
+    {
+      "name": "second create returns 201",
+      "pass": true
+    },
+    {
+      "name": "list returns 200 with both tasks in creation order",
+      "pass": true
+    },
+    {
+      "name": "update status returns 200 with status done",
+      "pass": true
+    },
+    {
+      "name": "blank title is 400 with an error message",
+      "pass": true
+    },
+    {
+      "name": "unknown id is 404 with an error message",
+      "pass": true
+    },
+    {
+      "name": "wrong method is 405 with an error message",
+      "pass": true
+    },
+    {
+      "name": "after restart the list still has both tasks and the updated status",
+      "pass": true
+    }
+  ],
   "checks": {
-    "app_create_list_patch": "see app-demo.txt",
-    "persists_across_restart": true,
     "tests_passed": 325,
     "tests_failed": 0
   },
