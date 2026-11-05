@@ -188,8 +188,19 @@ export function evaluatePr(gh: Gh, pr: PrInfo, cfg: DeliveryConfig): { control: 
   const reviews = gather(() => gh.reviews(pr.number), "reviews", (r) => reviewReasons.push(r));
   let approving: PrReview | undefined;
   if (reviews !== undefined) {
-    const latest = latestVerdictAt(reviews, cfg.reviewerLogin, head);
-    if (latest === undefined) reviewReasons.push(`no verdict by ${cfg.reviewerLogin} at head ${head}`);
+    // Only a verdict submitted no later than the merge counts; a missing or unparseable time is not
+    // provably before the merge, so it is excluded (fail closed).
+    const merged = Date.parse(pr.mergedAt);
+    const beforeMerge = reviews.filter((r) => {
+      const t = Date.parse(r.submitted_at ?? "");
+      return !Number.isNaN(t) && !Number.isNaN(merged) && t <= merged;
+    });
+    const latest = latestVerdictAt(beforeMerge, cfg.reviewerLogin, head);
+    if (latest === undefined) {
+      const late = latestVerdictAt(reviews, cfg.reviewerLogin, head);
+      reviewReasons.push(late === undefined ? `no verdict by ${cfg.reviewerLogin} at head ${head}`
+        : `no verdict by ${cfg.reviewerLogin} at head ${head} submitted before the merge (the ${late.state} one is after ${pr.mergedAt} or has no valid time)`);
+    }
     else if (latest.state !== "APPROVED") reviewReasons.push(`latest verdict by ${cfg.reviewerLogin} at head ${head} is ${latest.state}, not APPROVED`);
     else approving = latest;
   }

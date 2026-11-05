@@ -65,7 +65,7 @@ function fakeGh(w: World) {
   const gh: Gh = {
     mergedPrs: () => { bad("mergedPrs"); return prs.map((p) => p.info); },
     commits: (n) => { bad("commits"); return byPr(n).commits; },
-    reviews: (n) => { bad("reviews"); return byPr(n).reviews; },
+    reviews: (n) => { bad("reviews"); return byPr(n).reviews.map((r) => ("submitted_at" in r ? r : { ...r, submitted_at: "2026-11-02T12:00:00Z" })); },
     checkRuns: (sha) => { bad("checkRuns"); const f = prs.find((p) => p.info.head === sha); if (f === undefined) throw new Error("no head"); return f.runs; },
     protection: () => { bad("protection"); const p = w.protection ?? GOOD_PROTECTION; if (p instanceof Error) throw p; return p; },
     branchCommits: () => { bad("branchCommits"); return mainCommits; },
@@ -251,6 +251,24 @@ test("a real trailer block passes, including CRLF messages and continuation line
   const p = goodPr(55);
   p.commits = [{ sha: p.info.head, message: "feat: x\r\n\r\nbody text\r\n\r\nCo-Authored-By: B <b@example.com>\r\nAgent-Vendor: claude\r\nSigned-off-by: A Dev <dev@example.com>\r\n" }];
   assert.deepEqual(checksFailed(audit(fakeGh({ prs: [p] }).gh, opts), 55), []);
+});
+
+test("an approval at the exact head submitted after the merge, or with no valid time, does not count", () => {
+  const rv = (submitted_at: string | null, p: Fixture) => ({ user: { login: "ruzni-reviewer" }, state: "APPROVED", commit_id: p.info.head, body: "## Second opinion — codex\n\nVERDICT: APPROVE", submitted_at });
+  const late = goodPr(60); late.reviews = [rv("2026-11-03T00:00:01Z", late)];
+  const none = goodPr(61); none.reviews = [rv(null, none)];
+  const bad = goodPr(62); bad.reviews = [rv("not a date", bad)];
+  const edge = goodPr(63); edge.reviews = [rv("2026-11-03T00:00:00Z", edge)];
+  const a = audit(fakeGh({ prs: [late, none, bad, edge] }).gh, opts);
+  for (const n of [60, 61, 62]) assert.ok(checksFailed(a, n).includes("independent-approval-at-head"), `PR ${n}`);
+  assert.match(failed(a).find((r) => r.subject.pr === 60 && r.control.check === "independent-approval-at-head")?.reasons.join() ?? "", /before the merge/);
+  assert.deepEqual(checksFailed(a, 63), [], "approval at the merge instant counts");
+});
+
+test("a post-merge CHANGES_REQUESTED does not undo an approval given before the merge", () => {
+  const p = goodPr(64);
+  p.reviews.push({ user: { login: "ruzni-reviewer" }, state: "CHANGES_REQUESTED", commit_id: p.info.head, body: "x", submitted_at: "2026-11-04T00:00:00Z" });
+  assert.deepEqual(checksFailed(audit(fakeGh({ prs: [p] }).gh, opts), 64), []);
 });
 
 test("an approving review that declares no reviewer vendor fails vendor-separation (fail closed)", () => {
@@ -568,7 +586,7 @@ function runCli(w: CliWorld, extra: string[] = [], configText?: string) {
     };
     for (const p of prs) {
       routes[`repos/o/r/pulls/${p.info.number}/commits`] = p.commits;
-      routes[`repos/o/r/pulls/${p.info.number}/reviews`] = p.reviews;
+      routes[`repos/o/r/pulls/${p.info.number}/reviews`] = p.reviews.map((r) => ("submitted_at" in r ? r : { ...r, submitted_at: "2026-11-02T12:00:00Z" }));
       routes[`repos/o/r/commits/${p.info.head}/check-runs`] = p.runs;
       routes[`repos/o/r/commits/${p.info.head}/pulls`] = [p.info.number];
     }
