@@ -11,6 +11,10 @@
 //   dco-signoff                   every commit carries a Signed-off-by trailer
 //   agent-vendor-trailer          every commit carries exactly one Agent-Vendor, all the same (authorVendor)
 //   vendor-separation             the approving review's vendor is the one pickReviewer selects for the author's vendor
+// A failed PR check can be waived by control-waivers.json (see parseWaivers): each waiver names one PR,
+// its exact head SHA and one check, with a rationale. A waived failure stays `result: "fail"` in the
+// evidence and carries the waiver; it opens no finding and does not turn the run red. Any other failure
+// (another check, another head SHA, another PR) still does.
 // And for the repository:
 //   branch-protection             live protection of main equals .gibson-delivery.json
 //   no-direct-push                every commit on main since the base belongs to a merged PR
@@ -27,7 +31,7 @@
 // Usage (needs GH_TOKEN with contents:read, pull-requests:read, issues:write; reading branch
 // protection needs administration:read, so give the workflow a CONTROL_AUDIT_TOKEN secret):
 //   node scripts/control-audit.ts [--repo owner/name] [--since 2026-11-01T00:00:00Z]
-//        [--out control-evidence.jsonl] [--config .gibson-delivery.json] [--dry-run]
+//        [--out control-evidence.jsonl] [--config .gibson-delivery.json] [--waivers control-waivers.json] [--dry-run]
 // --dry-run reads only: findings are printed, no issue is written.
 // All GitHub access goes through the Gh interface, so the tests run with no network.
 
@@ -97,6 +101,38 @@ export const CONTROLS = {
   directPush: control("SDLC-SEC-008", SDLC, "no-direct-push", "No commit reaches main without a merged pull request"),
 } as const;
 
+/** A reviewed exception for one failed check of one merged PR at one exact head SHA. */
+export interface Waiver { pr: number; head: string; check: string; rationale: string }
+export const WAIVERS_SCHEMA = "task-management.control-waivers/v1";
+const WAIVABLE_CHECKS = [CONTROLS.approval, CONTROLS.checks, CONTROLS.dco, CONTROLS.trailer, CONTROLS.separation].map((c) => c.check);
+
+/** Parse control-waivers.json. Throws on anything malformed, so a bad file fails the run closed. */
+export function parseWaivers(text: string): Waiver[] {
+  let raw: unknown;
+  try { raw = JSON.parse(text); } catch { throw new Error("waivers file is not valid JSON"); }
+  const doc = raw as { schema?: unknown; waivers?: unknown } | null;
+  if (doc === null || typeof doc !== "object" || doc.schema !== WAIVERS_SCHEMA || !Array.isArray(doc.waivers)) {
+    throw new Error(`waivers file must be {"schema": "${WAIVERS_SCHEMA}", "waivers": [...]}`);
+  }
+  const seen = new Set<string>();
+  return (doc.waivers as unknown[]).map((w, i): Waiver => {
+    const x = w as Record<string, unknown> | null;
+    const at = `waiver ${i + 1}`;
+    if (x === null || typeof x !== "object" || Array.isArray(x)) throw new Error(`${at} is not an object`);
+    const extra = Object.keys(x).filter((k) => !["pr", "head", "check", "rationale"].includes(k));
+    if (extra.length > 0) throw new Error(`${at} has unknown field(s): ${extra.join(", ")}`);
+    const { pr, head, check, rationale } = x;
+    if (typeof pr !== "number" || !Number.isInteger(pr) || pr < 1) throw new Error(`${at}: pr must be a positive integer`);
+    if (typeof head !== "string" || !/^[0-9a-f]{40}$/.test(head)) throw new Error(`${at}: head must be a full 40-character lowercase commit SHA`);
+    if (typeof check !== "string" || !WAIVABLE_CHECKS.includes(check)) throw new Error(`${at}: check must be one of ${WAIVABLE_CHECKS.join(", ")}`);
+    if (typeof rationale !== "string" || rationale.trim().length < 20) throw new Error(`${at}: rationale must be a sentence of at least 20 characters`);
+    const key = `${pr}/${head}/${check}`;
+    if (seen.has(key)) throw new Error(`${at} duplicates ${key}`);
+    seen.add(key);
+    return { pr, head, check, rationale: rationale.trim() };
+  });
+}
+
 export interface Subject { kind: "pr" | "branch" | "commit"; ref: string; pr?: number; sha?: string }
 
 /** One line of the JSONL evidence file. */
@@ -112,6 +148,8 @@ export interface ControlRecord {
   reasons: string[];
   /** URLs / SHAs / names the result rests on. */
   evidence: string[];
+  /** Set on a failed record that a reviewed waiver covers; the result is still "fail". */
+  waiver?: Waiver;
 }
 
 export type Finding =
@@ -128,7 +166,7 @@ export interface Audit {
 
 export interface Push { before: string; after: string; timestamp: string }
 
-export interface Options { repo: string; run: Run; now: () => string; since: string; config: DeliveryConfig }
+export interface Options { repo: string; run: Run; now: () => string; since: string; config: DeliveryConfig; waivers?: Waiver[] }
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e)).trim().split("\n")[0] ?? "";
 const SIGNED_OFF = /^Signed-off-by:[ \t]*\S.*<[^<>\s]+>[ \t]*$/m;
@@ -174,9 +212,12 @@ function latestVerdictAt(reviews: PrReview[], login: string, head: string): PrRe
   return mine.at(-1);
 }
 
+/** Every reason produced by an evidence read failure starts with this; waivers never cover such a record. */
+const READ_FAILURE = "could not read ";
+
 /** Never throws: a read failure is a failed control with the reason. */
 function gather<T>(read: () => T, what: string, fail: (reason: string) => void): T | undefined {
-  try { return read(); } catch (e) { fail(`could not read ${what}: ${errText(e)}`); return undefined; }
+  try { return read(); } catch (e) { fail(`${READ_FAILURE}${what}: ${errText(e)}`); return undefined; }
 }
 
 /** Evaluate every per-PR control. */
@@ -347,7 +388,14 @@ export function audit(gh: Gh, opts: Options): Audit {
   for (const pr of prs.sort((a, b) => a.number - b.number)) {
     const subject: Subject = { kind: "pr", ref: pr.url, pr: pr.number, sha: pr.head };
     const recs = evaluatePr(gh, pr, cfg).map(({ control: c, verdict: v }) => emit(subject, c, v));
-    const failed = recs.filter((r) => r.result === "fail");
+    // A waiver accepts a control violation that was evaluated, never a failure to obtain the evidence. If any
+    // read for this PR failed, no waiver applies to it: other checks may be derived from the missing evidence.
+    const unreadable = recs.some((r) => r.reasons.some((x) => x.startsWith(READ_FAILURE)));
+    for (const r of recs) {
+      const w = r.result === "fail" && !unreadable ? (opts.waivers ?? []).find((x) => x.pr === pr.number && x.head === pr.head && x.check === r.control.check) : undefined;
+      if (w !== undefined) r.waiver = w;
+    }
+    const failed = recs.filter((r) => r.result === "fail" && r.waiver === undefined);
     if (failed.length > 0) {
       violations.push({ key: `pr-${pr.number}`, title: prFindingTitle(pr.number), failed,
         heading: `PR #${pr.number} (${pr.url}) "${pr.title}", merged ${pr.mergedAt}, did not meet the delivery controls at head \`${pr.head}\`.` });
@@ -462,6 +510,12 @@ function main(argv: string[]): number {
   if (Number.isNaN(Date.parse(since))) { console.log(`ERROR --since is not a date: ${since}`); return 2; }
   let config: DeliveryConfig;
   try { config = parseConfig(readFileSync(arg("--config") ?? ".gibson-delivery.json", "utf8")); } catch (e) { console.log(`ERROR ${errText(e)}`); return 2; }
+  let waivers: Waiver[] = [];
+  const waiversPath = arg("--waivers") ?? "control-waivers.json";
+  try { waivers = parseWaivers(readFileSync(waiversPath, "utf8")); } catch (e) {
+    // No file means no waivers; a file that cannot be read or parsed fails closed.
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") { console.log(`ERROR ${waiversPath}: ${errText(e)}`); return 2; }
+  }
   const run: Run = env.GITHUB_RUN_ID !== undefined
     ? { url: `${env.GITHUB_SERVER_URL ?? "https://github.com"}/${repo}/actions/runs/${env.GITHUB_RUN_ID}`, attempt: env.GITHUB_RUN_ATTEMPT ?? "1" }
     : { url: "local run (no GITHUB_RUN_ID)", attempt: "1" };
@@ -472,11 +526,11 @@ function main(argv: string[]): number {
     gh.createIssue = (title) => { console.log(`[dry-run] would open or update: ${title}`); return 0; };
     gh.updateIssue = (issue) => { console.log(`[dry-run] would update #${issue}`); };
   }
-  const a = audit(gh, { repo, run, now, since, config });
+  const a = audit(gh, { repo, run, now, since, config, waivers });
   writeFileSync(out, toJsonl(a.records));
   for (const e of a.errors) console.log(`ERROR ${e}`);
   for (const r of a.records.filter((x) => x.result === "fail")) {
-    console.log(`FAIL ${r.subject.kind} ${r.subject.pr === undefined ? r.subject.ref : `#${r.subject.pr}`} ${r.control.check}`);
+    console.log(`${r.waiver === undefined ? "FAIL" : "WAIVED"} ${r.subject.kind} ${r.subject.pr === undefined ? r.subject.ref : `#${r.subject.pr}`} ${r.control.check}`);
     for (const x of r.reasons) console.log(`  - ${x}`);
   }
   for (const f of a.findings) console.log(f.action === "error" ? `finding error (${f.key}): ${f.error}` : `finding ${f.action}: #${f.issue} (${f.key})`);

@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SCHEMA, audit, directPushFindingTitle, parseConfig, prFindingTitle, protectionDrift, protectionFindingTitle, toJsonl } from "../scripts/control-audit.ts";
+import { SCHEMA, WAIVERS_SCHEMA, audit, directPushFindingTitle, parseConfig, parseWaivers, prFindingTitle, protectionDrift, protectionFindingTitle, toJsonl } from "../scripts/control-audit.ts";
 import type { Audit, Commit, ControlRecord, DeliveryConfig, Gh, Issue, PrInfo, PrReview, Protection } from "../scripts/control-audit.ts";
 import type { CheckRun } from "../scripts/review-lane-rules.ts";
 
@@ -758,4 +758,113 @@ test("CLI bad arguments exit 2 without calling GitHub: unparseable --since, miss
   assert.equal(bad.status, 2);
   assert.match(bad.stdout, /ERROR delivery config has no reviewerLogin/);
   assert.equal(bad.calls.length, 0);
+});
+
+// ---- #61: reviewed waivers ----------------------------------------------------------------------
+
+const RATIONALE = "Merged before the review lane existed; reviewed and accepted by the owner.";
+const waiverFor = (p: Fixture, check: string) => ({ pr: p.info.number, head: p.info.head, check, rationale: RATIONALE });
+
+test("#61 a waived failure stays fail in the evidence with the waiver attached, opens no finding and the run passes", () => {
+  const p = goodPr(70, { reviews: [] });
+  const f = fakeGh({ prs: [p] });
+  const w = waiverFor(p, "independent-approval-at-head");
+  const failing = checksFailed(audit(fakeGh({ prs: [p] }).gh, opts), 70);
+  const a = audit(f.gh, { ...opts, waivers: failing.map((c) => waiverFor(p, c)) });
+  assert.ok(failing.includes(w.check));
+  assert.equal(a.result, "pass");
+  assert.equal(f.created.length, 0);
+  assert.deepEqual(a.findings, []);
+  const rec = a.records.find((r) => r.subject.pr === 70 && r.control.check === "independent-approval-at-head");
+  assert.equal(rec?.result, "fail");
+  assert.deepEqual(rec.waiver, w);
+  assert.match(toJsonl(a.records), /"waiver":\{"pr":70/);
+});
+
+test("#61 a waiver for another head SHA does not apply", () => {
+  const p = goodPr(71, { reviews: [] });
+  const f = fakeGh({ prs: [p] });
+  const a = audit(f.gh, { ...opts, waivers: [{ ...waiverFor(p, "independent-approval-at-head"), head: "f".repeat(40) }] });
+  assert.equal(a.result, "fail");
+  assert.equal(f.created.length, 1);
+  assert.equal(a.records.find((r) => r.control.check === "independent-approval-at-head")?.waiver, undefined);
+});
+
+test("#61 a waiver for another check or another PR does not apply, and only the waived check is dropped from the finding", () => {
+  const p = goodPr(72, { reviews: [], runs: [] });
+  const f = fakeGh({ prs: [p] });
+  const a = audit(f.gh, { ...opts, waivers: [waiverFor(p, "independent-approval-at-head"), { ...waiverFor(p, "required-checks-green"), pr: 99 }] });
+  assert.equal(a.result, "fail");
+  assert.equal(f.created.length, 1);
+  assert.doesNotMatch(f.created[0]?.body ?? "", /independent-approval-at-head/);
+  assert.match(f.created[0]?.body ?? "", /required-checks-green/);
+});
+
+test("#61 a PR that passes is unaffected by waivers", () => {
+  const p = goodPr(73);
+  const a = audit(fakeGh({ prs: [p] }).gh, { ...opts, waivers: [waiverFor(p, "dco-signoff")] });
+  assert.equal(a.result, "pass");
+  assert.ok(a.records.every((r) => r.waiver === undefined));
+});
+
+const waiversDoc = (waivers: unknown[]): string => JSON.stringify({ schema: WAIVERS_SCHEMA, waivers });
+const okWaiver = { pr: 1, head: "a".repeat(40), check: "vendor-separation", rationale: RATIONALE };
+
+test("#61 parseWaivers accepts a valid file and rejects every malformed shape (fail closed)", () => {
+  assert.deepEqual(parseWaivers(waiversDoc([okWaiver])), [okWaiver]);
+  assert.deepEqual(parseWaivers(waiversDoc([])), []);
+  const bad: [string, string][] = [
+    ["not json", "{"],
+    ["wrong schema", JSON.stringify({ schema: "x", waivers: [] })],
+    ["no waivers array", JSON.stringify({ schema: WAIVERS_SCHEMA })],
+    ["null entry", waiversDoc([null])],
+    ["short head", waiversDoc([{ ...okWaiver, head: "abc1234" }])],
+    ["uppercase head", waiversDoc([{ ...okWaiver, head: "A".repeat(40) }])],
+    ["wildcard head", waiversDoc([{ ...okWaiver, head: "*" }])],
+    ["string pr", waiversDoc([{ ...okWaiver, pr: "1" }])],
+    ["unknown check", waiversDoc([{ ...okWaiver, check: "branch-protection" }])],
+    ["wildcard check", waiversDoc([{ ...okWaiver, check: "*" }])],
+    ["short rationale", waiversDoc([{ ...okWaiver, rationale: "ok" }])],
+    ["extra field", waiversDoc([{ ...okWaiver, until: "never" }])],
+    ["duplicate", waiversDoc([okWaiver, okWaiver])],
+  ];
+  for (const [name, text] of bad) assert.throws(() => parseWaivers(text), Error, name);
+});
+
+test("#61 CLI: a malformed waivers file exits 2 before any audit; a missing file means no waivers", () => {
+  const dir = mkdtempSync(join(tmpdir(), "control-audit-waivers-"));
+  try {
+    const cfgPath = join(dir, "cfg.json");
+    writeFileSync(cfgPath, JSON.stringify(cfg));
+    const bad = join(dir, "waivers.json");
+    writeFileSync(bad, "{");
+    const script = fileURLToPath(new URL("../scripts/control-audit.ts", import.meta.url));
+    const r = spawnSync(process.execPath, [script, "--config", cfgPath, "--waivers", bad, "--out", join(dir, "o.jsonl"), "--dry-run"], { encoding: "utf8" });
+    assert.equal(r.status, 2);
+    assert.match(r.stdout, /ERROR .*waivers file is not valid JSON/);
+    assert.equal(existsSync(join(dir, "o.jsonl")), false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("#61 a waiver never covers an evidence read failure: the check stays failed, a finding is filed and the run fails", () => {
+  const p = goodPr(74);
+  const f = fakeGh({ prs: [p], failOn: new Set(["checkRuns"]) });
+  const a = audit(f.gh, { ...opts, waivers: [waiverFor(p, "required-checks-green")] });
+  assert.equal(a.result, "fail");
+  const rec = a.records.find((r) => r.subject.pr === 74 && r.control.check === "required-checks-green");
+  assert.equal(rec?.result, "fail");
+  assert.equal(rec.waiver, undefined);
+  assert.match(rec.reasons.join(" "), /could not read check runs/);
+  assert.equal(f.created.length, 1);
+  assert.match(f.created[0]?.body ?? "", /could not read check runs/);
+});
+
+test("#61 a read failure on reviews is not waivable for any check that depends on it", () => {
+  const p = goodPr(75);
+  const f = fakeGh({ prs: [p], failOn: new Set(["reviews"]) });
+  const failing = checksFailed(audit(fakeGh({ prs: [p], failOn: new Set(["reviews"]) }).gh, opts), 75);
+  assert.ok(failing.length > 0);
+  const a = audit(f.gh, { ...opts, waivers: failing.map((c) => waiverFor(p, c)) });
+  assert.equal(a.result, "fail");
+  assert.ok(a.records.every((r) => r.waiver === undefined));
 });
