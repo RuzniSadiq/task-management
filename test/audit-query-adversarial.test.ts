@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadEvidence, answer, main, SCHEMA } from "../scripts/audit-query.ts";
 import type { Answer } from "../scripts/audit-query.ts";
+import { controlAuditJsonl } from "./audit-fixtures.ts";
 
 // Adversarial cases for issue #42 (audit-query). The happy path lives in audit-query.test.ts.
 //
@@ -19,10 +20,16 @@ const INSIDE = "c".repeat(39) + "3";
 const MERGE = "b".repeat(39) + "2";
 const DIGEST = "d".repeat(64);
 
-const rec = (o: Record<string, unknown> = {}): string => JSON.stringify({
-  pr: 49, head_sha: HEAD, merge_sha: MERGE, author_vendor: "claude", reviewer: "ruzni-reviewer", reviewer_vendor: "codex",
-  checks: { gate: "pass" }, control: { id: "SDLC-PREV-007", catalog: "FINOS SDLC Common Controls", result: "pass" }, ...o,
+/** Real control-audit.ts output for one merged PR (default #49 at HEAD). Ends with a newline. */
+const rec = (o: { pr?: number; head?: string; authorVendor?: string; reviewerVendor?: string; failingCheck?: string } = {}): string =>
+  controlAuditJsonl([{ pr: 49, head: HEAD, ...o }]);
+/** A hand-written line in the shape control-audit.ts emits, for edge cases the producer cannot be made to produce. */
+const line = (o: Record<string, unknown>): string => JSON.stringify({
+  schema: SCHEMA, event: "control.evaluated", recorded_at: "2026-11-05T00:00:00.000Z", repository: "o/r", run: { url: "u", attempt: "1" },
+  subject: { kind: "pr", ref: "r", pr: 1, sha: HEAD }, control: { id: "RC-005", catalog: "c", version: "1", check: "required-checks-green", name: "n" },
+  result: "pass", reasons: [], evidence: [], ...o,
 });
+
 const release = (o: Record<string, unknown> = {}): object => ({
   schema: SCHEMA, event: "release.published", recorded_at: "2026-11-05T10:00:00.000Z",
   artefact: { name: "task-management-0.1.0.tgz", sha256: DIGEST, tag: "v0.1.0", commit: MERGE },
@@ -68,7 +75,7 @@ test("source makes no network, gh, git or subprocess calls", () => {
 });
 
 test("evidence dir is never modified by a query", () => {
-  const dir = fixture({ "a.jsonl": rec() + "\n", "r/release-evidence.json": release(), "v.json": verify([{ tag: "v0.1.0", result: "pass" }]) });
+  const dir = fixture({ "a.jsonl": rec(), "r/release-evidence.json": release(), "v.json": verify([{ tag: "v0.1.0", result: "pass" }]) });
   const snap = (): string => JSON.stringify(["a.jsonl", "r/release-evidence.json", "v.json"].map((f) => readFileSync(join(dir, f), "utf8")))
     + JSON.stringify(readdirSync(dir, { recursive: true }).sort());
   try {
@@ -82,7 +89,7 @@ test("evidence dir is never modified by a query", () => {
 // ---- AC3: sha prefix edges --------------------------------------------------------------------
 
 test("sha prefix: 6 chars is below the minimum and finds nothing; 7 chars finds the change", () => {
-  const dir = fixture({ "a.jsonl": rec() + "\n" });
+  const dir = fixture({ "a.jsonl": rec() });
   try {
     assert.equal(query(dir, HEAD.slice(0, 6)).code, 1);
     assert.equal(query(dir, HEAD.slice(0, 7)).code, 0);
@@ -91,25 +98,21 @@ test("sha prefix: 6 chars is below the minimum and finds nothing; 7 chars finds 
 });
 
 test("sha prefix: 7+ non-hex characters never match a commit", () => {
-  const dir = fixture({ "a.jsonl": rec() + "\n" });
+  const dir = fixture({ "a.jsonl": rec() });
   try {
     for (const q of ["zzzzzzz", "aaaaaaag", "aaaaaaa!"]) assert.equal(query(dir, q).code, 1, q);
   } finally { cleanup(dir); }
 });
 
-test("sha prefix: matching a merge sha resolves to that change, and uppercase evidence still matches", () => {
-  const dir = fixture({ "a.jsonl": rec({ head_sha: HEAD.toUpperCase(), merge_sha: MERGE.toUpperCase() }) + "\n" });
+test("sha prefix: uppercase sha in the evidence still matches", () => {
+  const dir = fixture({ "a.jsonl": rec().replace(new RegExp(HEAD, "g"), HEAD.toUpperCase()) });
   try {
-    assert.equal(ans(dir, MERGE.slice(0, 9)).change?.pr, 49);
-    assert.equal(ans(dir, HEAD).found, true);
+    assert.equal(ans(dir, HEAD).change?.pr, 49);
   } finally { cleanup(dir); }
 });
 
-test("sha prefix: one record's head and another's merge sharing a prefix is ambiguous, not a guess", () => {
-  const dir = fixture({ "a.jsonl": [
-    rec({ pr: 1, head_sha: "abcdef1" + "0".repeat(33), merge_sha: null }),
-    rec({ pr: 2, head_sha: "9".repeat(40), merge_sha: "abcdef1" + "2".repeat(33) }),
-  ].join("\n") + "\n" });
+test("sha prefix: two PR heads sharing a prefix is ambiguous, not a guess", () => {
+  const dir = fixture({ "a.jsonl": controlAuditJsonl([{ pr: 1, head: "abcdef1" + "0".repeat(33) }, { pr: 2, head: "abcdef1" + "2".repeat(33) }]) });
   try {
     const t = query(dir, "abcdef1");
     assert.equal(t.code, 2);
@@ -119,12 +122,12 @@ test("sha prefix: one record's head and another's merge sharing a prefix is ambi
   } finally { cleanup(dir); }
 });
 
-test("sha prefix: the same sha seen in the audit record and the release is not 'ambiguous'", () => {
-  const dir = fixture({ "a.jsonl": rec() + "\n", "r.json": release() });
+test("sha prefix: the same sha seen in the audit records and the release is not 'ambiguous'", () => {
+  const dir = fixture({ "a.jsonl": rec({ head: MERGE }), "r.json": release() });
   try {
     const a = ans(dir, MERGE.slice(0, 7));
     assert.equal(a.release?.tag, "v0.1.0");
-    assert.equal(a.change?.head_sha, HEAD);
+    assert.equal(a.change?.head_sha, MERGE);
   } finally { cleanup(dir); }
 });
 
@@ -196,49 +199,52 @@ test("identical duplicate release records (same digest) do not raise a conflict"
   } finally { cleanup(dir); }
 });
 
-test("a check that passed in one control record but failed in another at the same head is reported failed", () => {
-  const dir = fixture({ "a.jsonl": [rec({ checks: { gate: "pass", DCO: "pass" } }), rec({ checks: { gate: "fail" } })].join("\n") + "\n" });
+test("two required-checks-green records at one head, one failing: the head is reported failed", () => {
+  const dir = fixture({ "a.jsonl": [line({ evidence: ["check gate", "check DCO"] }), line({ result: "fail", reasons: ["check gate: failure"] })].join("\n") + "\n" });
   try {
     const a = ans(dir, HEAD);
-    assert.deepEqual(a.checks?.failed, ["gate"]);
-    assert.deepEqual(a.checks?.passed, ["DCO"]);
+    assert.equal(a.checks?.result, "fail");
+    assert.deepEqual(a.checks?.passed, []);
+    assert.match(a.checks?.failure_reasons.join("\n") ?? "", /gate/);
   } finally { cleanup(dir); }
 });
 
-test("non-'pass' check values (pending, null, numbers) count as not passed", () => {
-  const dir = fixture({ "a.jsonl": rec({ checks: { a: "pass", b: "pending", c: null, d: 1, e: "PASS" } }) + "\n" });
-  try {
-    const a = ans(dir, HEAD);
-    assert.deepEqual(a.checks?.passed, ["a"]);
-    assert.deepEqual(a.checks?.failed, ["b", "c", "d", "e"]);
-  } finally { cleanup(dir); }
+test("a non-'pass' result (pending, number, uppercase) is never reported as a pass", () => {
+  for (const result of ["pending", "PASS", "unknown"]) {
+    const dir = fixture({ "a.jsonl": line({ result, evidence: ["check gate"] }) + "\n" });
+    try {
+      const a = ans(dir, HEAD);
+      assert.equal(a.checks?.result, result);
+      assert.deepEqual(a.checks?.passed, [], result);
+    } finally { cleanup(dir); }
+  }
 });
 
 // ---- file-system shapes -----------------------------------------------------------------------
 
 test("deeply nested evidence is found", () => {
-  const dir = fixture({ "a/b/c/d/e/f/g/audit.jsonl": rec() + "\n" });
+  const dir = fixture({ "a/b/c/d/e/f/g/audit.jsonl": rec() });
   try {
     assert.equal(query(dir, HEAD).code, 0);
   } finally { cleanup(dir); }
 });
 
 test("a symlink to a directory or file outside the evidence root is not read; one inside it is followed", () => {
-  const outside = fixture({ "audit.jsonl": rec() + "\n" });
-  const dir = fixture({ "inside/audit.jsonl": rec({ head_sha: INSIDE }) + "\n" });
+  const outside = fixture({ "audit.jsonl": rec() });
+  const dir = fixture({ "inside/audit.jsonl": rec({ head: INSIDE }) });
   try {
     symlinkSync(outside, join(dir, "linked"), "dir");
     symlinkSync(join(outside, "audit.jsonl"), join(dir, "ext.jsonl"));
     symlinkSync(join(dir, "inside"), join(dir, "alias"), "dir");
     const external = query(dir, HEAD);
     assert.match(external.out, /NO EVIDENCE/, "external evidence must not answer the query");
-    assert.doesNotMatch(external.out, /ruzni-reviewer/);
+    assert.doesNotMatch(external.out, /PR #49/);
     assert.equal(query(dir, INSIDE).code, 0, "a link that stays inside the root still works");
   } finally { cleanup(dir); cleanup(outside); }
 });
 
 test("a symlink loop terminates with a clean usage-style error, never a hang or stack trace", () => {
-  const dir = fixture({ "audit.jsonl": rec() + "\n" });
+  const dir = fixture({ "audit.jsonl": rec() });
   try {
     symlinkSync(dir, join(dir, "loop"), "dir");
     const t = query(dir, HEAD);
@@ -248,7 +254,7 @@ test("a symlink loop terminates with a clean usage-style error, never a hang or 
 });
 
 test("a dangling symlink does not hide the good evidence next to it", () => {
-  const dir = fixture({ "audit.jsonl": rec() + "\n" });
+  const dir = fixture({ "audit.jsonl": rec() });
   try {
     symlinkSync(join(dir, "nowhere.json"), join(dir, "dangling.json"));
     const t = query(dir, HEAD);
@@ -257,7 +263,7 @@ test("a dangling symlink does not hide the good evidence next to it", () => {
 });
 
 test("--evidence pointing at a file, not a directory, is a usage error", () => {
-  const dir = fixture({ "audit.jsonl": rec() + "\n" });
+  const dir = fixture({ "audit.jsonl": rec() });
   try {
     const t = run([HEAD, "--evidence", join(dir, "audit.jsonl")]);
     assert.equal(t.code, 2);
@@ -268,7 +274,7 @@ test("--evidence pointing at a file, not a directory, is a usage error", () => {
 test("non-evidence files are ignored; bad JSON is a warning; foreign-schema JSON is silent", () => {
   const dir = fixture({
     "notes.txt": "hello", "broken.json": "{not json", "other.json": { schema: "something/else", event: "release.published" },
-    "unknown-event.json": { schema: SCHEMA, event: "release.exploded" }, "audit.jsonl": rec() + "\n",
+    "unknown-event.json": { schema: SCHEMA, event: "release.exploded" }, "audit.jsonl": rec(),
   });
   try {
     const a = ans(dir, HEAD);
@@ -277,21 +283,20 @@ test("non-evidence files are ignored; bad JSON is a warning; foreign-schema JSON
   } finally { cleanup(dir); }
 });
 
-test("JSONL tolerates CRLF, blank lines, a missing trailing newline and non-string head_sha", () => {
-  const dir = fixture({ "a.jsonl": `${rec()}\r\n\r\n${JSON.stringify({ head_sha: 5 })}\r\n${rec({ pr: 50, head_sha: "f".repeat(40), merge_sha: null })}` });
+test("JSONL tolerates CRLF, blank lines, a missing trailing newline and non-string sha", () => {
+  const f = "f".repeat(40);
+  const text = `${rec().trimEnd().replace(/\n/g, "\r\n")}\r\n\r\n${line({ subject: { kind: "pr", pr: 3, sha: 5 } })}\r\n${line({ subject: { kind: "pr", pr: 50, sha: f } })}`;
+  const dir = fixture({ "a.jsonl": text });
   try {
     assert.equal(ans(dir, HEAD).found, true);
-    assert.equal(ans(dir, "f".repeat(40)).change?.pr, 50);
-    assert.equal(ans(dir, HEAD).warnings.length, 1);
+    assert.equal(ans(dir, f).change?.pr, 50);
+    assert.equal(ans(dir, HEAD).warnings.length, 0, "a record with no usable sha is ignored, not a parse failure");
   } finally { cleanup(dir); }
 });
 
 test("huge JSONL (100k records) is answered quickly and the one match is found", () => {
   const lines: string[] = [];
-  for (let i = 0; i < 100_000; i++) {
-    const sha = i.toString(16).padStart(40, "0");
-    lines.push(JSON.stringify({ pr: i, head_sha: sha, merge_sha: null, author_vendor: "claude", checks: { gate: "pass" } }));
-  }
+  for (let i = 0; i < 100_000; i++) lines.push(line({ subject: { kind: "pr", pr: i, sha: i.toString(16).padStart(40, "0") } }));
   const dir = fixture({ "big.jsonl": lines.join("\n") + "\n" });
   try {
     const t0 = Date.now();
@@ -305,7 +310,7 @@ test("huge JSONL (100k records) is answered quickly and the one match is found",
 // ---- argument handling ------------------------------------------------------------------------
 
 test("flag order does not matter, extra positionals and a flag-as-dir are usage errors", () => {
-  const dir = fixture({ "a.jsonl": rec() + "\n" });
+  const dir = fixture({ "a.jsonl": rec() });
   try {
     assert.equal(run(["--json", "--evidence", dir, HEAD]).code, 0);
     assert.equal(run(["--evidence", dir, HEAD, "--json"]).code, 0);
@@ -316,7 +321,7 @@ test("flag order does not matter, extra positionals and a flag-as-dir are usage 
 });
 
 test("a query that looks like a flag or path cannot escape the evidence dir", () => {
-  const dir = fixture({ "a.jsonl": rec() + "\n" });
+  const dir = fixture({ "a.jsonl": rec() });
   try {
     for (const q of ["../../etc/passwd", "", " "]) {
       const t = query(dir, q);

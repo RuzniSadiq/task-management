@@ -26,23 +26,21 @@
 //        { recorded_at, result: "pass"|"fail", error?, releases: [{ tag, result, artefacts, reasons }],
 //          skipped: [{ tag, reason }], run: { url, attempt } }
 //
-//   C. control-audit JSONL — any `*.jsonl` file; one JSON object per line, one line per PR per control
-//      (produced by issue #41). Record shape (this header is the contract #41 must match):
-//        {
-//          "pr": 49,                               // number: the pull request
-//          "head_sha": "<40 hex>",                 // string: PR head the checks and approval were bound to
-//          "merge_sha": "<40 hex>" | null,         // string|null: resulting commit on the default branch
-//          "author_vendor": "claude",              // string: vendor/agent that built the change
-//          "reviewer": "ruzni-reviewer",           // string|null: identity that approved
-//          "reviewer_vendor": "codex",             // string|null: vendor of the reviewing model
-//          "checks": { "gate": "pass", ... },      // object name -> "pass"|"fail" (anything else counts as not passed)
-//          "control": { "id": "SDLC-PREV-007", "catalog": "FINOS SDLC Common Controls", "result": "pass"|"fail" }
-//        }
-//      Extra fields are ignored. Blank lines are skipped; a line that is not a JSON object is reported
-//      as a warning and skipped (it never aborts the query).
+//   C. control-audit JSONL — any `*.jsonl` file, as written by scripts/control-audit.ts (--out): one
+//      `control.evaluated` record per line, one line per PR per control (plus repository controls):
+//        { schema, event: "control.evaluated", recorded_at, repository, run,
+//          subject: { kind: "pr"|"branch"|"commit", ref, pr?, sha? },   // sha = the PR head (kind "pr") or the commit
+//          control: { id, catalog, version, check, name }, result: "pass"|"fail", reasons: [...], evidence: [...] }
+//      The producer records verdicts, not identities: it does NOT record the merge sha, the author's or
+//      reviewer's login or vendor, or per-check results. So this tool reports those as unavailable and
+//      answers from the verdicts that ARE recorded (agent-vendor-trailer, independent-approval-at-head,
+//      vendor-separation, required-checks-green). A line without `subject` and `control.check` is a
+//      warning and is skipped; it never aborts the query.
 //
-// Independence rule: an approval is "independent" only when both vendors are known (non-empty) and differ,
-// compared case-insensitively. Unknown vendor is reported as not independent, never assumed independent.
+// Independence rule: an approval is "independent" only when the control-audit `vendor-separation` verdict
+// for that head is a recorded pass. A recorded fail is "NO"; no record is "no evidence", never assumed.
+// A release is linked to a PR only when the release's commit equals the queried/recorded sha; the audit
+// records carry no merge sha, so a tag does not reach back to its PR.
 
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
@@ -53,14 +51,14 @@ const MIN_PREFIX = 7;
 type Json = Record<string, unknown>;
 
 export interface AuditRecord {
+  kind: string;
   pr: number | null;
-  head_sha: string;
-  merge_sha: string | null;
-  author_vendor: string | null;
-  reviewer: string | null;
-  reviewer_vendor: string | null;
-  checks: Record<string, string>;
-  control: { id: string; catalog: string | null; result: string } | null;
+  sha: string;
+  check: string;
+  control_id: string;
+  result: string;
+  reasons: string[];
+  evidence: string[];
   source: string;
 }
 
@@ -94,9 +92,9 @@ export interface Answer {
   query: string;
   found: boolean;
   resolved: { commit: string | null; tag: string | null };
-  change: { pr: number | null; head_sha: string; merge_sha: string | null; author_vendor: string | null } | null;
-  approval: { reviewer: string | null; reviewer_vendor: string | null; independent: boolean } | null;
-  checks: { head_sha: string; passed: string[]; failed: string[]; controls: { id: string; result: string }[] } | null;
+  change: { pr: number | null; head_sha: string; merge_sha: null; author_vendor: null; merged_via_pr: string | null; vendor_declared: string | null } | null;
+  approval: { reviewer: null; independent_approval_at_head: string | null; vendor_separation: string | null; independent: boolean | null; reasons: string[] } | null;
+  checks: { head_sha: string; result: string | null; passed: string[]; failure_reasons: string[]; controls: { id: string; check: string; result: string }[] } | null;
   release: {
     tag: string | null; commit: string | null; artefact: string | null; sha256: string | null;
     approved_by: string[]; triggered_by: string | null; recorded_at: string | null; checks: Record<string, string>;
@@ -138,19 +136,27 @@ function listFiles(dir: string, root: string, warnings: string[], seen: Set<stri
   return out;
 }
 
-function toAudit(o: Json, source: string): AuditRecord | null {
-  const head = str(o.head_sha);
-  if (head === null) return null;
+const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+
+/** A record is "recognised" when it is a well-formed control record; one with no sha (branch protection) is kept out of the sha index. */
+function toAudit(o: Json, source: string): AuditRecord | "no-sha" | null {
+  const subject = o.subject;
   const c = o.control;
+  if (!isObj(subject) || !isObj(c)) return null;
+  const sha = str(subject.sha);
+  const check = str(c.check);
+  const result = str(o.result);
+  if (check === null || result === null) return null;
+  if (sha === null) return "no-sha";
   return {
-    pr: typeof o.pr === "number" ? o.pr : null,
-    head_sha: head.toLowerCase(),
-    merge_sha: str(o.merge_sha)?.toLowerCase() ?? null,
-    author_vendor: str(o.author_vendor),
-    reviewer: str(o.reviewer),
-    reviewer_vendor: str(o.reviewer_vendor),
-    checks: checksOf(o.checks),
-    control: isObj(c) && str(c.id) !== null ? { id: str(c.id) ?? "", catalog: str(c.catalog), result: str(c.result) ?? "unknown" } : null,
+    kind: str(subject.kind) ?? "",
+    pr: typeof subject.pr === "number" ? subject.pr : null,
+    sha: sha.toLowerCase(),
+    check,
+    control_id: str(c.id) ?? "",
+    result,
+    reasons: strs(o.reasons),
+    evidence: strs(o.evidence),
     source,
   };
 }
@@ -170,7 +176,7 @@ export function loadEvidence(dir: string): Corpus {
         try { rec = JSON.parse(line); } catch { rec = undefined; }
         const a = isObj(rec) ? toAudit(rec, rel) : null;
         if (a === null) corpus.warnings.push(`${rel}:${i + 1}: not a control-audit record (skipped)`);
-        else { corpus.audit.push(a); used++; }
+        else { used++; if (a !== "no-sha") corpus.audit.push(a); }
       });
       if (used > 0) corpus.files.push(rel);
       continue;
@@ -209,8 +215,6 @@ export function loadEvidence(dir: string): Corpus {
 
 const isHex = (s: string): boolean => /^[0-9a-f]+$/.test(s);
 const matches = (sha: string | null, q: string): boolean => sha !== null && sha.startsWith(q);
-const vendorsIndependent = (a: string | null, b: string | null): boolean =>
-  a !== null && b !== null && a.toLowerCase() !== b.toLowerCase();
 
 /** Answer the five questions for `query` (a sha or prefix, or a tag). Pure: no I/O. */
 export function answer(corpus: Corpus, query: string): Answer | { ambiguous: string[] } {
@@ -221,16 +225,14 @@ export function answer(corpus: Corpus, query: string): Answer | { ambiguous: str
   let commit: string | null = byTag[0]?.commit ?? null;
   if (shaLike) {
     const full = new Set<string>();
-    for (const a of corpus.audit) for (const s of [a.head_sha, a.merge_sha]) if (s !== null && matches(s, q)) full.add(s);
+    for (const a of corpus.audit) if (matches(a.sha, q)) full.add(a.sha);
     for (const r of corpus.releases) if (r.commit !== null && matches(r.commit, q)) full.add(r.commit);
     if (full.size > 1) return { ambiguous: [...full].sort() };
     commit = [...full][0] ?? q;
   }
 
-  const records = commit === null ? [] : corpus.audit.filter((a) => a.head_sha === commit || a.merge_sha === commit);
-  // A release records the commit it was cut from, usually the merge commit, so link through the audit record.
+  const records = commit === null ? [] : corpus.audit.filter((a) => a.sha === commit);
   const linked = new Set<string>(commit === null ? [] : [commit]);
-  for (const r of records) { linked.add(r.head_sha); if (r.merge_sha !== null) linked.add(r.merge_sha); }
   const releases = byTag.length > 0 ? byTag : corpus.releases.filter((r) => r.commit !== null && linked.has(r.commit));
   const rel = releases[0] ?? null;
   const warnings = [...corpus.warnings];
@@ -240,32 +242,44 @@ export function answer(corpus: Corpus, query: string): Answer | { ambiguous: str
   }
   const tag =rel?.tag ?? (corpus.verifications.some((v) => v.tag === query) ? query : null);
 
-  const first = records[0] ?? null;
-  const passed = new Set<string>();
-  const failed = new Set<string>();
-  for (const r of records) for (const [k, v] of Object.entries(r.checks)) (v === "pass" ? passed : failed).add(k);
-  for (const k of failed) passed.delete(k);
+  const prRecords = records.filter((r) => r.kind === "pr");
+  const first = prRecords[0] ?? null;
+  // Several records for one control at one head are only a pass when all pass; otherwise show the worst one.
+  const verdictOf = (check: string): AuditRecord | null => {
+    const all = prRecords.filter((r) => r.check === check);
+    return all.find((r) => r.result === "fail") ?? all.find((r) => r.result !== "pass") ?? all[0] ?? null;
+  };
+  const separation = verdictOf("vendor-separation");
+  const approval = verdictOf("independent-approval-at-head");
+  const green = verdictOf("required-checks-green");
 
   const verifs = corpus.verifications.filter((v) => tag !== null && v.tag === tag)
     .sort((a, b) => (a.recorded_at ?? "").localeCompare(b.recorded_at ?? ""));
   const latest = verifs[verifs.length - 1] ?? null;
 
-  const found = first !== null || rel !== null || latest !== null;
+  const found = records.length > 0 || rel !== null || latest !== null;
   return {
     query,
     found,
-    resolved: { commit: first !== null ? commit : rel?.commit ?? null, tag },
-    change: first === null ? null : { pr: first.pr, head_sha: first.head_sha, merge_sha: first.merge_sha, author_vendor: first.author_vendor },
-    approval: first === null ? null : {
-      reviewer: first.reviewer,
-      reviewer_vendor: first.reviewer_vendor,
-      independent: vendorsIndependent(first.author_vendor, first.reviewer_vendor),
+    resolved: { commit: records.length > 0 ? commit : rel?.commit ?? null, tag },
+    change: first === null ? null : {
+      pr: first.pr, head_sha: first.sha, merge_sha: null, author_vendor: null,
+      merged_via_pr: verdictOf("merged-via-pr")?.result ?? null,
+      vendor_declared: verdictOf("agent-vendor-trailer")?.result ?? null,
     },
-    checks: first === null ? null : {
-      head_sha: first.head_sha,
-      passed: [...passed].sort(),
-      failed: [...failed].sort(),
-      controls: records.flatMap((r) => (r.control === null ? [] : [{ id: r.control.id, result: r.control.result }])),
+    approval: first === null ? null : {
+      reviewer: null,
+      independent_approval_at_head: approval?.result ?? null,
+      vendor_separation: separation?.result ?? null,
+      independent: separation === null ? null : separation.result === "pass",
+      reasons: [...(approval?.result === "pass" ? [] : approval?.reasons ?? []), ...(separation?.result === "pass" ? [] : separation?.reasons ?? [])],
+    },
+    checks: records.length === 0 ? null : {
+      head_sha: commit ?? "",
+      result: green?.result ?? null,
+      passed: green?.result === "pass" ? green.evidence.flatMap((e) => (e.startsWith("check ") ? [e.slice(6)] : [])).sort() : [],
+      failure_reasons: green !== null && green.result !== "pass" ? green.reasons : [],
+      controls: records.map((r) => ({ id: r.control_id, check: r.check, result: r.result })),
     },
     release: rel === null ? null : {
       tag: rel.tag, commit: rel.commit, artefact: rel.artefact?.name ?? null, sha256: rel.artefact?.sha256 ?? null,
@@ -291,14 +305,22 @@ export function render(a: Answer): string {
   L.push(`audit-query: ${a.query}${a.resolved.commit !== null ? `  (commit ${a.resolved.commit})` : ""}${a.resolved.tag !== null ? `  (tag ${a.resolved.tag})` : ""}`);
   L.push("");
   L.push("1. Who / which agent made the change?");
-  L.push(a.change === null ? `   ${NO} (no control-audit record for this commit)`
-    : `   ${a.change.author_vendor ?? "unknown vendor"}  PR ${a.change.pr === null ? "?" : `#${a.change.pr}`}  head ${a.change.head_sha}  merge ${a.change.merge_sha ?? "none recorded"}`);
+  L.push(a.change === null ? `   ${NO} (no control-audit record for a pull request at this commit)`
+    : `   PR ${a.change.pr === null ? "?" : `#${a.change.pr}`}  head ${a.change.head_sha}  merged via PR: ${a.change.merged_via_pr ?? NO}\n   author / agent: not recorded in control-audit evidence (agent-vendor-trailer: ${a.change.vendor_declared ?? NO}); merge sha: not recorded`);
   L.push("2. Who approved, and was it an independent vendor?");
-  L.push(a.approval === null ? `   ${NO}`
-    : `   ${a.approval.reviewer ?? "no approver recorded"} (${a.approval.reviewer_vendor ?? "unknown vendor"}) — independent of author: ${a.approval.independent ? "yes" : "NO"}`);
+  if (a.approval === null) L.push(`   ${NO}`);
+  else {
+    const ind = a.approval.independent === null ? NO : a.approval.independent ? "yes" : "NO";
+    L.push(`   approver login: not recorded; independent approval at head: ${a.approval.independent_approval_at_head ?? NO}; independent vendor (vendor-separation): ${ind}`);
+    for (const r of a.approval.reasons) L.push(`   - ${r}`);
+  }
   L.push("3. Which checks passed at that head?");
-  L.push(a.checks === null ? `   ${NO}`
-    : `   head ${a.checks.head_sha}\n   passed: ${a.checks.passed.join(", ") || "none"}\n   failed: ${a.checks.failed.join(", ") || "none"}`);
+  if (a.checks === null) L.push(`   ${NO}`);
+  else if (a.checks.result === null) L.push(`   head ${a.checks.head_sha}\n   ${NO} (no required-checks-green record)`);
+  else {
+    L.push(`   head ${a.checks.head_sha}\n   required-checks-green: ${a.checks.result}\n   passed: ${a.checks.passed.join(", ") || "none recorded"}`);
+    for (const r of a.checks.failure_reasons) L.push(`   - ${r}`);
+  }
   L.push("4. What was released, and who approved the release?");
   L.push(a.release === null ? `   ${NO} (no release evidence for this commit/tag)`
     : `   ${a.release.artefact ?? "unknown artefact"} sha256 ${a.release.sha256 ?? "unknown"}  tag ${a.release.tag ?? "?"}  commit ${a.release.commit ?? "?"}\n   approved by: ${a.release.approved_by.join(", ") || "no approver recorded"}  (triggered by ${a.release.triggered_by ?? "unknown"})`);

@@ -7,17 +7,15 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEvidence, answer, main, SCHEMA } from "../scripts/audit-query.ts";
 import type { Answer } from "../scripts/audit-query.ts";
+import { controlAuditJsonl } from "./audit-fixtures.ts";
 
 const HEAD = "a".repeat(39) + "1";
 const MERGE = "b".repeat(39) + "2";
 const OTHER = "c".repeat(40);
 const DIGEST = "d".repeat(64);
 
-const rec = (control: string, o: Record<string, unknown> = {}): string => JSON.stringify({
-  pr: 49, head_sha: HEAD, merge_sha: MERGE, author_vendor: "claude", reviewer: "ruzni-reviewer", reviewer_vendor: "codex",
-  checks: { gate: "pass", "security-fast": "pass", DCO: "pass" },
-  control: { id: control, catalog: "FINOS SDLC Common Controls", result: "pass" }, ...o,
-});
+const audit = (o: Parameters<typeof controlAuditJsonl>[0][number] extends infer T ? Partial<T> : never = {}): string =>
+  controlAuditJsonl([{ pr: 49, head: HEAD, ...o }]);
 
 const releaseEvidence = {
   schema: SCHEMA, event: "release.published", recorded_at: "2026-11-05T10:00:00.000Z",
@@ -42,7 +40,7 @@ function fixture(files: Record<string, string | object>): string {
 }
 
 const FULL = {
-  "control-audit.jsonl": `${rec("SDLC-PREV-007")}\n\n${rec("SDLC-PREV-008")}\n`,
+  "control-audit.jsonl": audit(),
   "v0.1.0/release-evidence.json": releaseEvidence,
   "verify-release-evidence.json": verifyEvidence("pass", "2026-11-05T12:00:00.000Z"),
 };
@@ -65,27 +63,35 @@ test("sha query answers all five questions from evidence alone", () => {
   try {
     const a = ans(dir, HEAD);
     assert.equal(a.found, true);
-    assert.deepEqual(a.change, { pr: 49, head_sha: HEAD, merge_sha: MERGE, author_vendor: "claude" });
-    assert.deepEqual(a.approval, { reviewer: "ruzni-reviewer", reviewer_vendor: "codex", independent: true });
-    assert.deepEqual(a.checks?.passed, ["DCO", "gate", "security-fast"]);
-    assert.deepEqual(a.checks?.failed, []);
-    assert.equal(a.checks?.controls.length, 2);
-    assert.equal(a.release?.sha256, DIGEST);
-    assert.deepEqual(a.release?.approved_by, ["RuzniSadiq"]);
-    assert.equal(a.verification?.reverified, true);
-    assert.equal(a.verification?.result, "pass");
-    assert.equal(a.verification?.since_release, true);
+    assert.deepEqual(a.change, { pr: 49, head_sha: HEAD, merge_sha: null, author_vendor: null, merged_via_pr: "pass", vendor_declared: "pass" });
+    assert.equal(a.approval?.independent_approval_at_head, "pass");
+    assert.equal(a.approval?.vendor_separation, "pass");
+    assert.equal(a.approval?.independent, true);
+    assert.equal(a.approval?.reviewer, null);
+    assert.equal(a.checks?.result, "pass");
+    assert.deepEqual(a.checks?.passed, ["DCO", "gate", "security-fast", "test-integrity"]);
+    assert.deepEqual(a.checks?.failure_reasons, []);
+    assert.equal(a.checks?.controls.length, 6);
+    const r = ans(dir, "v0.1.0");
+    assert.equal(r.release?.sha256, DIGEST);
+    assert.deepEqual(r.release?.approved_by, ["RuzniSadiq"]);
+    assert.equal(r.verification?.reverified, true);
+    assert.equal(r.verification?.result, "pass");
+    assert.equal(r.verification?.since_release, true);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("merge sha, short prefix and tag all resolve to the same change and release", () => {
+test("short prefix resolves the change; the release commit and the tag resolve the release", () => {
   const dir = fixture(FULL);
   try {
-    for (const q of [MERGE, HEAD.slice(0, 8), "v0.1.0"]) {
+    const byHead = ans(dir, HEAD.slice(0, 8));
+    assert.equal(byHead.change?.head_sha, HEAD);
+    assert.equal(byHead.release, null, "audit records carry no merge sha, so a head does not reach the release");
+    for (const q of [MERGE, "v0.1.0"]) {
       const a = ans(dir, q);
-      assert.equal(a.found, true, q);
-      assert.equal(a.change?.head_sha, HEAD, q);
       assert.equal(a.release?.tag, "v0.1.0", q);
+      assert.equal(a.change, null, `${q}: no PR record at the merge commit`);
+      assert.equal(a.verification?.result, "pass", q);
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -97,11 +103,14 @@ test("--json prints the answers and exits 0; text output names every question", 
     assert.equal(j.code, 0);
     const parsed = JSON.parse(j.out) as Answer;
     assert.equal(parsed.approval?.independent, true);
-    assert.equal(parsed.release?.artefact, "task-management-0.1.0.tgz");
+    assert.equal(parsed.release, null, "a head sha does not reach the release: audit records carry no merge sha");
+    const tagged = JSON.parse(run(dir, ["v0.1.0", "--json"]).out) as Answer;
+    assert.equal(tagged.release?.artefact, "task-management-0.1.0.tgz");
     const t = run(dir, [HEAD]);
     assert.equal(t.code, 0);
     for (const s of ["1. Who", "2. Who approved", "3. Which checks", "4. What was released", "5. Re-verified"]) assert.match(t.out, new RegExp(s));
-    assert.match(t.out, /independent of author: yes/);
+    assert.match(t.out, /independent vendor \(vendor-separation\): yes/);
+    assert.match(t.out, /author \/ agent: not recorded/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -129,7 +138,7 @@ test("empty evidence dir: no evidence, exit 1", () => {
 });
 
 test("missing pieces are reported as no evidence, not invented", () => {
-  const dir = fixture({ "control-audit.jsonl": rec("SDLC-PREV-007") + "\n" });
+  const dir = fixture({ "control-audit.jsonl": audit() });
   try {
     const a = ans(dir, HEAD);
     assert.equal(a.found, true);
@@ -164,26 +173,44 @@ test("the latest re-verification wins, and a failing one is reported as fail", (
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("same vendor, or an unknown vendor, is NOT independent", () => {
-  for (const o of [{ reviewer_vendor: "Claude" }, { reviewer_vendor: null }, { author_vendor: null }]) {
-    const dir = fixture({ "a.jsonl": rec("SDLC-PREV-007", o) + "\n" });
-    try {
-      assert.equal(ans(dir, HEAD).approval?.independent, false, JSON.stringify(o));
-    } finally { rmSync(dir, { recursive: true, force: true }); }
-  }
+test("same vendor is NOT independent; a non-approving verdict is reported with its reason", () => {
+  const same = fixture({ "a.jsonl": audit({ authorVendor: "claude", reviewerVendor: "claude" }) });
+  const changes = fixture({ "a.jsonl": audit({ verdict: "CHANGES_REQUESTED" }) });
+  try {
+    const a = ans(same, HEAD);
+    assert.equal(a.approval?.independent, false);
+    assert.equal(a.approval?.vendor_separation, "fail");
+    assert.match(run(same, [HEAD]).out, /independent vendor \(vendor-separation\): NO/);
+    const c = ans(changes, HEAD);
+    assert.equal(c.approval?.independent_approval_at_head, "fail");
+    assert.match(c.approval?.reasons.join("\n") ?? "", /CHANGES_REQUESTED/);
+  } finally { rmSync(same, { recursive: true, force: true }); rmSync(changes, { recursive: true, force: true }); }
 });
 
-test("a failed check is listed as failed and not as passed", () => {
-  const dir = fixture({ "a.jsonl": rec("SDLC-PREV-007", { checks: { gate: "pass", DCO: "fail" } }) + "\n" });
+test("a failed required check is reported with the producer's reason and no checks are claimed as passed", () => {
+  const dir = fixture({ "a.jsonl": audit({ failingCheck: "DCO" }) });
   try {
     const a = ans(dir, HEAD);
-    assert.deepEqual(a.checks?.passed, ["gate"]);
-    assert.deepEqual(a.checks?.failed, ["DCO"]);
+    assert.equal(a.checks?.result, "fail");
+    assert.deepEqual(a.checks?.passed, []);
+    assert.match(a.checks?.failure_reasons.join("\n") ?? "", /DCO/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("every record the real control-audit.ts emits is read (none skipped as unrecognised)", () => {
+  const text = audit();
+  const dir = fixture({ "control-evidence.jsonl": text });
+  try {
+    const a = ans(dir, HEAD);
+    assert.deepEqual(a.warnings, []);
+    // 6 per-PR controls carry the PR head; the branch-protection record carries no sha
+    assert.equal(a.checks?.controls.length, 6);
+    assert.equal(text.trimEnd().split("\n").length, 7);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("a malformed JSONL line is a warning and does not hide the good records", () => {
-  const dir = fixture({ "a.jsonl": `not json\n${rec("SDLC-PREV-007")}\n[1,2]\n` });
+  const dir = fixture({ "a.jsonl": `not json\n${audit()}[1,2]\n` });
   try {
     const a = ans(dir, HEAD);
     assert.equal(a.found, true);
@@ -193,7 +220,7 @@ test("a malformed JSONL line is a warning and does not hide the good records", (
 });
 
 test("ambiguous sha prefix is a usage error, not a guess", () => {
-  const dir = fixture({ "a.jsonl": `${rec("X", { head_sha: "abcdef1" + "0".repeat(33) })}\n${rec("X", { head_sha: "abcdef1" + "1".repeat(33), merge_sha: null })}\n` });
+  const dir = fixture({ "a.jsonl": controlAuditJsonl([{ pr: 1, head: "abcdef1" + "0".repeat(33) }, { pr: 2, head: "abcdef1" + "1".repeat(33) }]) });
   try {
     const t = run(dir, ["abcdef1"]);
     assert.equal(t.code, 2);
