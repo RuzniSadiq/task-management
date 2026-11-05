@@ -385,6 +385,106 @@ describe("#79 GET /tasks?title=", () => {
   });
 });
 
+describe("#79 GET /tasks?title= adversarial sensors", () => {
+  async function names(base: string, query: string): Promise<string[]> {
+    const response = await fetch(`${base}/tasks${query}`);
+    assert.equal(response.status, 200, query);
+    return ((await response.json()) as Task[]).map((task) => task.title);
+  }
+
+  test("AC5/AC4 a blank title with an invalid status is 400, never the unfiltered list", async () => {
+    await withServer(async (base) => {
+      await createTask(base, { title: "milk" });
+      for (const query of ["?title=&status=bogus", "?status=bogus&title=", "?title=%20&status=", "?title=milk&status=Todo"]) {
+        const message = await assertError(await fetch(`${base}/tasks${query}`), 400);
+        assert.ok(message.length > 0, query);
+      }
+    });
+  });
+
+  test("AC6 a repeated title is 400 even when combined with a valid status or other parameters", async () => {
+    await withServer(async (base) => {
+      await createTask(base, { title: "milk" });
+      for (const query of ["?title=milk&status=todo&title=milk", "?title=a&x=1&title=b", "?title=milk&title=milk&title=milk"]) {
+        await assertError(await fetch(`${base}/tasks${query}`), 400);
+      }
+    });
+  });
+
+  test("AC3 a very long search text is a plain 200 [] and does not crash or hang the server", async () => {
+    await withServer(async (base) => {
+      await createTask(base, { title: "milk" });
+      // Well under Node's default 16 KiB header limit, and far longer than any title.
+      assert.deepEqual(await names(base, `?title=${"a".repeat(8000)}`), []);
+      assert.deepEqual(await names(base, `?title=${encodeURIComponent("é".repeat(2000))}`), []);
+      // The server still answers afterwards.
+      assert.deepEqual(await names(base, "?title=milk"), ["milk"]);
+    });
+  });
+
+  test("AC2 case-insensitive matching covers non-ASCII letters", async () => {
+    await withServer(async (base) => {
+      await createTask(base, { title: "Café au lait" });
+      await createTask(base, { title: "ÉCOLE" });
+      await createTask(base, { title: "straße" });
+      assert.deepEqual(await names(base, `?title=${encodeURIComponent("CAFÉ")}`), ["Café au lait"]);
+      assert.deepEqual(await names(base, `?title=${encodeURIComponent("école")}`), ["ÉCOLE"]);
+      assert.deepEqual(await names(base, `?title=${encodeURIComponent("STRASSE")}`), []);
+    });
+  });
+
+  test("AC2 a title query matches across words and punctuation only as the exact substring", async () => {
+    await withServer(async (base) => {
+      await createTask(base, { title: "buy  milk" });
+      await createTask(base, { title: "buy milk" });
+      // Internal whitespace is not collapsed: a single space does not match a double space.
+      assert.deepEqual(await names(base, "?title=buy+milk"), ["buy milk"]);
+      assert.deepEqual(await names(base, "?title=buy++milk"), ["buy  milk"]);
+    });
+  });
+
+  test("AC8 a differently named or bracketed parameter is not the title filter", async () => {
+    await withServer(async (base) => {
+      await createTask(base, { title: "a" });
+      await createTask(base, { title: "b" });
+      assert.deepEqual(await names(base, "?Title=a"), ["a", "b"]);
+      assert.deepEqual(await names(base, "?title[]=a"), ["a", "b"]);
+      assert.deepEqual(await names(base, "?titles=a"), ["a", "b"]);
+      assert.deepEqual(await names(base, "?q=a"), ["a", "b"]);
+    });
+  });
+
+  test("AC8 other methods on /tasks?title= are unchanged: 405 with Allow, HEAD matches plain HEAD with no body", async () => {
+    await withServer(async (base) => {
+      await createTask(base, { title: "milk" });
+      for (const method of ["PUT", "DELETE", "PATCH"]) {
+        const response = await fetch(`${base}/tasks?title=milk`, { method });
+        assert.equal(response.headers.get("allow"), "GET, POST", method);
+        await assertError(response, 405);
+      }
+      const head = await fetch(`${base}/tasks?title=milk`, { method: "HEAD" });
+      const plainHead = await fetch(`${base}/tasks`, { method: "HEAD" });
+      assert.equal(head.status, plainHead.status);
+      assert.equal(await head.text(), "");
+    });
+  });
+
+  test("AC2 matching does not mutate or reorder stored tasks (a filtered read leaves the file unchanged)", async () => {
+    const file = await freshTasksFile();
+    const running = await start(file);
+    try {
+      await createTask(running.base, { title: "milk" });
+      await createTask(running.base, { title: "bread" });
+      const before = await readFile(file, "utf8");
+      await names(running.base, "?title=MILK");
+      await names(running.base, "?title=zzz");
+      assert.equal(await readFile(file, "utf8"), before);
+    } finally {
+      await running.running.close();
+    }
+  });
+});
+
 describe("#77 GET /tasks?status= adversarial sensors", () => {
   async function names(base: string, query: string): Promise<string[]> {
     const response = await fetch(`${base}/tasks${query}`);

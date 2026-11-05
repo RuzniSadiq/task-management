@@ -5,7 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { StoreCorruptError, TaskStore } from "../src/store.ts";
-import { NotFoundError, ValidationError, isIsoUtcTimestamp, isUuid, type Task } from "../src/tasks.ts";
+import {
+  NotFoundError,
+  ValidationError,
+  isIsoUtcTimestamp,
+  isUuid,
+  titleContains,
+  validateTitleQuery,
+  type Task,
+} from "../src/tasks.ts";
 
 let root: string;
 let counter = 0;
@@ -276,6 +284,21 @@ describe("AC4 list", () => {
     }
     // An invalid status still wins as a 400 when the title is fine.
     assert.throws(() => store.list("bogus", "a"), ValidationError);
+  });
+
+  test("#79 validateTitleQuery trims and rejects blank or non-string input; titleContains is literal and case-insensitive", () => {
+    assert.equal(validateTitleQuery("  milk \n"), "milk");
+    assert.equal(validateTitleQuery("a  b"), "a  b");
+    for (const bad of ["", "  ", "\t\n", " ", undefined, null, 1, true, ["a"], {}]) {
+      assert.throws(() => validateTitleQuery(bad), ValidationError, JSON.stringify(bad));
+    }
+    assert.equal(titleContains("Buy Milk", "milk"), true);
+    assert.equal(titleContains("Buy Milk", "BUY MILK"), true);
+    assert.equal(titleContains("ÉCOLE", "école"), true);
+    assert.equal(titleContains("Buy Milk", "buy  milk"), false);
+    assert.equal(titleContains("a.b", "a.b"), true);
+    assert.equal(titleContains("axb", "a.b"), false);
+    assert.equal(titleContains("abc", "abcd"), false);
   });
 
   test("#77 list(status) rejects anything but the three statuses with ValidationError", async () => {
